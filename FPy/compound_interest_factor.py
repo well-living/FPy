@@ -2,7 +2,7 @@
 """
 Compound Interest Fomulas
 
-@author: welliving
+@author: WeLLiving@well-living
 
 """
 import pandas as pd
@@ -16,7 +16,6 @@ class InterestFactor:
             interest rate.
         t : int
             point of time.
-
         """
         self.r = r
         self.t = t
@@ -67,14 +66,12 @@ class InterestFactor:
 class CompoundInterestSimulation:    
     def __init__(self, r, t):
         """
-        
         Parameters
         ----------
         r : float
             interest rate.
         t : int
             point of time.
-
         """
         self.r = r
         self.t = t
@@ -124,7 +121,6 @@ class CompoundInterestSimulation:
             df.loc[i, "積立前期末資産"] = df.loc[i-1, "積立後期末資産"] * (1 + self.r)
             df.loc[i, "積立後期末資産"] = df.loc[i, "積立前期末資産"] + df.loc[i, "期末積立額"]
         return df, InterestFactor(self.r, self.t).sff(), 1
-    
 
     # 年金現価係数
     def uspwf(self):
