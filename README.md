@@ -1,2 +1,2 @@
-# fpy
+# FPy
 financial planning package
