@@ -45,6 +45,11 @@ def calc_expenditure_allocated_by_age(rate_of_expenditure_allocated_by_age_talbe
         rate_of_expenditure_allocated_by_age = rate_of_expenditure_allocated_by_age_talbe.loc[age, "消費支出(万円)"] / sum(rate_of_expenditure_allocated_by_age_talbe.loc[filter_lifetime, "消費支出(万円)"])
     return rate_of_expenditure_allocated_by_age
 
+def calc_future_expenditure(age, start_age, end_age, consumption_expenditure, rate_of_expenditure_allocated_by_age_talbe):
+    filter_age = (rate_of_expenditure_allocated_by_age_talbe.index >= start_age) & (rate_of_expenditure_allocated_by_age_talbe.index <= end_age)
+    future_expenditure_table = rate_of_expenditure_allocated_by_age_talbe.loc[filter_age, "消費支出(万円)"] / rate_of_expenditure_allocated_by_age_talbe.loc[age, "消費支出(万円)"] * consumption_expenditure
+    return future_expenditure_table
+
 disposable_income_line_segment_table = calc_line_segment(disposable_income_df)
 disposable_income_table = calc_amount_by_age(disposable_income_line_segment_table, colname="可処分所得")
 income_growth_rate_table = calc_growth_rate(disposable_income_table, "可処分所得", "所得上昇率")
@@ -55,3 +60,4 @@ consumption_expenditure_table = calc_amount_by_age(consumption_expenditure_line_
 consumption_expenditure_table["消費支出(万円)"] = consumption_expenditure_table["消費支出"] / 10000
 rate_of_expenditure_allocated_by_age_talbe = consumption_expenditure_table[["年齢", "消費支出(万円)"]].set_index("年齢")
 expenditure_allocated_by_age = calc_expenditure_allocated_by_age(rate_of_expenditure_allocated_by_age_talbe, 40, 96)
+future_expenditure = calc_future_expenditure(40, 65, 96, 300000, rate_of_expenditure_allocated_by_age_talbe)
