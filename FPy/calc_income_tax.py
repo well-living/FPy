@@ -10,7 +10,7 @@ class TaxPlanning:
         dividend_income=0,
         #realestate_income=0,
         business_income=0,
-        salary=0,　　# 給与収入
+        salary=0,  # 給与収入
         retirement_allowance=0,  # 退職金
         #forestry_income=0,
         #shortterm_capitalgain=0,
@@ -18,8 +18,9 @@ class TaxPlanning:
         #realestate_shortterm_capitalgain=0,
         #realestate_longterm_capitalgain=0,
         temporary_income_before_cost=0,
-        public_pension=0  # 公的年金
+        public_pension=0,  # 公的年金
         #miscellaneous_income_excluding_pension=0
+        families=None
     ):
         self.interest_income = interest_income
         self.dividend_income = dividend_income
@@ -30,48 +31,87 @@ class TaxPlanning:
         #self.forestry_income = forestry_income
         #self.shortterm_capitalgain = shortterm_capitalgain
         #self.longterm_capitalgain = longterm_capitalgain
-        #self.temporary_income_before_cost = temporary_income_before_cost
+        self.temporary_income_before_cost = temporary_income_before_cost
         self.public_pension = public_pension
         #self.miscellaneous_income_excluding_pension = miscellaneous_income_excluding_pension
         self.basic_exemption = 380000
+        self.families = families
 
-
+        self.income = self.salary + self.retirement_allowance + self.temporary_income_before_cost + self.public_pension \
+            + self.business_income + self.interest_income + self.dividend_income
+    
     # 給与所得
     def calc_employment_income(self):
         """
         給与収入から給与所得金額を計算
         """
-        if self.salary <= 1625000:
-            self.employment_income_deduction = 650000
+        # 給与所得控除
+        if self.salary <= 550000:
+            self.employment_income_deduction = self.salary
+        elif self.salary <= 1625000:
+            self.employment_income_deduction = 550000
         elif self.salary <= 1800000:
-            self.employment_income_deduction = self.salary * 0.4
+            self.employment_income_deduction = self.salary * 0.4 - 100000
         elif self.salary <= 3600000:
-            self.employment_income_deduction = self.salary * 0.3 + 180000
+            self.employment_income_deduction = self.salary * 0.3 + 80000
         elif self.salary <= 6600000:
-            self.employment_income_deduction = self.salary * 0.2 + 540000
-        elif self.salary <= 10000000:
-            self.employment_income_deduction = self.salary * 0.1 + 1200000
+            self.employment_income_deduction = self.salary * 0.2 + 440000
+        elif self.salary <= 8500000:
+            self.employment_income_deduction = self.salary * 0.1 + 1100000
         else:
-            self.employment_income_deduction = 2200000
+            self.employment_income_deduction = 1950000
+
+        # 所得金額調整控除
+        if (self.salary > 8500000) & isinstance(self.families, collections.abc.Sequence):
+            cond = False
+            for family_menber in self.families:
+                cond |= (family_menber.relationship == "本人") & (family_menber.is_disabled)
+                cond |= family_menber.is_dependent & (self.age < 23)
+                cond |= family_menber.is_dependent & (family_menber.is_disabled)
+            if cond:
+                employment_income_adjustment_deduction = (min(self.salary, 10000000) - 8500000) * 0.1
+            else:
+                employment_income_adjustment_deduction = 0
+        else:
+            employment_income_adjustment_deduction = 0
+
+        if self.public_pension > 100000:
+            employment_income_adjustment_deduction += 100000
+
+        self.employment_income_adjustment_deduction = employment_income_adjustment_deduction
+                
         self.employment_income = self.salary - self.employment_income_deduction  # 給与所得
+        
         return self.employment_income
 
     # 退職所得
     def calc_retirement_income(self, service_year=20):
         if service_year <= 20:
-            self.retirement_income_deduction = max(400000 * service_year, 800000)
+            self.retirement_income_deduction = min(max(400000 * service_year, 800000), self.retirement_allowance)
         else:
-            self.retirement_income_deduction = 8000000 + 700000 * (service_year - 20)
-        self.retirement_income = (self.retirement_allowance - self.retirement_income_deduction) / 2
+            self.retirement_income_deduction = min(8000000 + 700000 * (service_year - 20), self.retirement_allowance)
+
+        retirement_allowance_after_deduction = self.retirement_allowance - self.retirement_income_deduction
+
+        if (service_year <= 5) & (retirement_allowance_after_deduction > 3000000):
+            self.retirement_income = retirement_allowance_after_deduction + 1500000
+        else:
+            self.retirement_income = retirement_allowance_after_deduction / 2
         return self.retirement_income
 
     # 一時所得
     def calc_temporary_income(self, cost_for_temporary_income=0):
-        self.temporary_income = max(temporary_income_before_cost - cost_for_temporary_income - 500000, 0)
+        self.temporary_income = max(self.temporary_income_before_cost - cost_for_temporary_income - 500000, 0)
         return self.temporary_income
 
     # 雑所得(年金のみと仮定)
     def calc_miscellaneous_income(self, age=60, private_pension=0, total_private_pension=0, private_pension_premium=0):
+        if isinstance(self.families, collections.abc.Sequence):
+            for family_menber in self.families:
+                if family_menber.relationship == "本人":
+                    age = family_menber.age
+                    pass
+                
         if age >= 65:
             if self.public_pension < 3300000:
                 self.pension_deduction = 1200000
@@ -90,17 +130,26 @@ class TaxPlanning:
                 self.pension_deduction = self.public_pension * 0.15 + 785000
             else:
                 self.pension_deduction = self.public_pension * 0.05 + 1555000
-        self.miscellaneous_income = (self.public_pension - self.pension_deduction) + (private_pension - total_private_pension / private_pension_premium)
+
+        private_pension = private_pension - total_private_pension / private_pension_premium if private_pension_premium > 0 else 0
+        self.miscellaneous_income = (self.public_pension - self.pension_deduction) + private_pension
         return self.miscellaneous_income
     
     def totalize_profit_loss(self):
         """
         損益通算し総所得を計算
         """
-        total1 = self.interest_income + self.dividend_income + self.realestate_income + self.business_income + self.salary_income + self.miscellaneous_income
-        total2 = self.shortterm_capitalgai + self.longterm_capitalgain + self.miscellaneous_income
+        self.calc_employment_income()
+        self.calc_retirement_income()
+        self.calc_temporary_income()
+        self.calc_miscellaneous_income()
+        
+        total1 = self.interest_income + self.dividend_income + self.business_income + self.salary + self.miscellaneous_income
+        #total1 += self.realestate_income
+        total2 = self.miscellaneous_income
+        #total2 += self.shortterm_capitalgai + self.longterm_capitalgain
         total3 = total1 + total2
-        self.gross_income = total3 + self.forestry_income + self.retirement_income
+        self.gross_income = total3 + self.retirement_income - self.employment_income_adjustment_deduction # + self.forestry_income 
         return self.gross_income
 
 
@@ -167,14 +216,21 @@ class TaxPlanning:
             self.medicallongtermcareinsurance_deduction = 40000
         return self.medicallongtermcareinsurance_deduction
 
-    def calc_lifeinsurance_deduction(self):
+    def calc_lifeinsurance_deduction(self, generallifeinsurance_premium=0, individualannuity_premium=0, medicallongtermcareinsurance_premium=0):
         """
         生命保険料控除
         """
+        # 一般生命保険料控除
+        self.calc_generallifeinsurance_deduction(generallifeinsurance_premium)
+        # 個人年金保険料控除
+        self.calc_individualannuity_deduction(individualannuity_premium)
+        # 介護医療保険料控除
+        self.calc_medicallongtermcareinsurance_deduction(medicallongtermcareinsurance_premium)
+        
         self.lifeinsurance_deduction = self.generallifeinsurance_deduction + self.individualannuity_deduction + self.medicallongtermcareinsurance_deduction
         return self.lifeinsurance_deduction
 
-    def calc_earthquakeinsurance_deduction(self, premium):
+    def calc_earthquakeinsurance_deduction(self, premium=0):
         """
         地震保険料控除
         """
@@ -236,13 +292,35 @@ class TaxPlanning:
         """
         所得控除
         """
-        self.income_deduction = self.basic_exemption + self.medical_expenses_deduction + self.socialinsurance_deduction + self.smallmutual_deduction \
+        # 医療費控除
+        self.calc_medical_expenses_deduction()
+        # 社会保険料控除
+        self.calc_socialinsurance_deduction()
+        # 小規模企業共済等掛金控除
+        self.calc_smallmutual_deduction()
+        # 生命保険料控除
+        self.calc_lifeinsurance_deduction()
+        # 地震保険料控除
+        self.calc_earthquakeinsurance_deduction()
+        # 寡婦・寡夫控除
+        self.calc_widow_deduction()
+        # 勤労学生控除控除
+        self.calc_workingstudent_deduction()
+        # 配偶者控除
+        self.calc_spouse_deduction()
+        # 扶養控除
+        self.calc_dependents_deduction()
+        # 障害者控除
+        self.calc_disabledperson_deduction()
+        # 寄付金控除
+        self.calc_donation_deduction()
+        self.income_deduction = min(self.basic_exemption + self.medical_expenses_deduction + self.socialinsurance_deduction + self.smallmutual_deduction \
             + self.lifeinsurance_deduction + self.earthquakeinsurance_deduction + self.donation_deduction \
             + self.disabledperson_deduction + self.widow_deduction + self.workingstudent_deduction \
-            + self.spouse_deduction + self.dependents_deduction
+            + self.spouse_deduction + self.dependents_deduction, self.gross_income)
         return self.income_deduction
 
-    def calc_taxable_income():
+    def calc_taxable_income(self):
         """
         課税所得
         """
@@ -291,7 +369,8 @@ class TaxPlanning:
     def calc_tax_credit(self, housing_loan_deduction=0):
         """
         税額控除
-        """        
+        """
+        self.calc_dividend_deduction()
         self.housing_loan_deduction = housing_loan_deduction
         self.tax_credit = self.dividend_deduction + self.housing_loan_deduction
         return self.tax_credit
@@ -308,3 +387,24 @@ class TaxPlanning:
         源泉徴収、納付税額
         """
         return None
+
+    def calc_tax(self,housing_loan_deduction=0):
+        # 総所得
+        self.totalize_profit_loss()
+        # 所得控除
+        self.calc_income_deduction()
+        # 課税所得
+        self.calc_taxable_income()
+        # 算出税額
+        self.calc_calculated_tax()
+        # 税額控除
+        self.calc_tax_credit(housing_loan_deduction)
+        # 所得税
+        self.calc_income_tax()
+        return self.income_tax
+
+    def calc_disposable_income(self):
+        self.disposable_income = self.income - self.income_tax
+        return self.disposable_income
+
+        
