@@ -407,4 +407,7 @@ class TaxPlanning:
         self.disposable_income = self.income - self.income_tax
         return self.disposable_income
 
-        
+
+
+
+
