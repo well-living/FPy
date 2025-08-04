@@ -52,7 +52,7 @@ class TestAssetLiabilityBasicFunctionality:
         """Test default values for optional fields."""
         asset = AssetLiabilitySchema(price=100.0, unit=5.0)
         assert asset.cashinflow_per_unit == 0.0
-        assert asset.rate == 0.0
+        assert asset.rate is None
 
 
 class TestAssetLiabilityValidationErrors:
@@ -174,7 +174,8 @@ class TestAssetLiabilityListProcessing:
             unit=5.0,
             rate=0.1  # 10% matches the price growth
         )
-        assert asset.rate == [0.1]  # Should be converted to list
+        assert len(asset.rate) == 1  # Should be converted to list
+        assert abs(asset.rate[0] - 0.1) < 1e-10  # Use tolerance for floating point comparison
         
         # Inconsistent case
         with pytest.raises(ValidationError, match="Existing rate.*does not match calculated rate"):
@@ -184,14 +185,14 @@ class TestAssetLiabilityListProcessing:
                 rate=0.05  # 5% doesn't match the 10% price growth
             )
     
-    def test_price_list_too_short_for_rate_calculation(self):
-        """Test error when price list is too short to calculate rates."""
-        with pytest.raises(ValidationError, match="price list must have at least 2 elements"):
-            AssetLiabilitySchema(
-                price=[100.0],  # Only one element
-                unit=5.0,
-                rate=0.1
-            )
+    def test_single_element_price_list_becomes_scalar(self):
+        """Test that single-element price list is normalized to scalar, avoiding rate calculation."""
+        asset = AssetLiabilitySchema(
+            price=[100.0],  # Single-element list
+            unit=5.0
+        )
+        assert asset.price == 100.0  # List converted to scalar
+        assert asset.rate is None     # No rate calculation for scalar price
     
     def test_zero_price_in_rate_calculation(self):
         """Test error when zero price prevents rate calculation."""
@@ -306,7 +307,7 @@ class TestAssetLiabilityIntegration:
         assert asset.book_balance == 94000.0  # Purchase price
         assert len(asset.rate) == 2  # Two rate periods
         
-        # Verify rate calculations
+        # Verify rate calculations with tolerance
         expected_rate_1 = (97.0 / 95.0) - 1
         expected_rate_2 = (100.0 / 97.0) - 1
         

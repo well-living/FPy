@@ -31,7 +31,7 @@ class AssetLiabilitySchema(BaseModel):
         Cash inflow per unit, defaults to 0.0 if not provided
         (Interest from bonds and loans, dividends from stocks, distributions from investment trusts, etc.)
     rate : Optional[Union[float, List[float]]]
-        Price growth rate (rate of return), must be greater than -1, defaults to 0.0 if not provided
+        Price growth rate (rate of return), must be greater than -1, defaults to None if not provided
 
     Notes
     -----
@@ -69,7 +69,7 @@ class AssetLiabilitySchema(BaseModel):
     
     @field_validator('rate')
     @classmethod
-    def validate_rate(cls, v: Optional[Union[float, List[float]]]) -> Union[float, List[float]]:
+    def validate_rate(cls, v: Optional[Union[float, List[float]]]) -> Optional[Union[float, List[float]]]:
         """
         Validate that rate(s) are greater than -1.
         
@@ -80,7 +80,7 @@ class AssetLiabilitySchema(BaseModel):
             
         Returns
         -------
-        Union[float, List[float]]
+        Optional[Union[float, List[float]]]
             Validated rate value(s)
             
         Raises
@@ -89,7 +89,7 @@ class AssetLiabilitySchema(BaseModel):
             If any rate is not greater than -1
         """
         if v is None:
-            return 0.0
+            return None
         
         if isinstance(v, list):
             for i, rate in enumerate(v):
@@ -124,6 +124,10 @@ class AssetLiabilitySchema(BaseModel):
             raise ValueError(
                 'At least two of price, unit, and balance must be provided'
             )
+        
+        # Validate and normalize price and rate before processing
+        self.price = self._normalize_to_scalar_if_single(self.price)
+        self.rate = self._normalize_to_scalar_if_single(self.rate)
         
         # Get the current price (first element if list, otherwise the value itself)
         current_price = self.price[0] if isinstance(self.price, list) else self.price
@@ -171,9 +175,6 @@ class AssetLiabilitySchema(BaseModel):
             If price and rate list lengths are inconsistent or
             if the price growth relationship doesn't hold
         """
-        self.price = self._normalize_to_scalar_if_single(self.price)
-        self.rate = self._normalize_to_scalar_if_single(self.rate)
-        
         price_is_list = isinstance(self.price, list)
         rate_is_list = isinstance(self.rate, list)
         
@@ -182,7 +183,12 @@ class AssetLiabilitySchema(BaseModel):
         elif rate_is_list and not price_is_list:  # rate is list, price is scalar
             self._generate_price_from_rate()
         elif price_is_list and not rate_is_list:  # price is list, rate is scalar
-            self._generate_rate_from_price()
+            if self.rate is None:
+                # Calculate rate from price list
+                self._generate_rate_from_price()
+            else:
+                # Validate consistency and generate rate list
+                self._generate_rate_from_price()
         elif price_is_list and rate_is_list:  # both are lists
             self._validate_both_lists()
 
@@ -192,7 +198,7 @@ class AssetLiabilitySchema(BaseModel):
             return value
         
         if len(value) == 0:
-            raise ValueError(f'{value.__class__.__name__} list cannot be empty')
+            raise ValueError(f'list cannot be empty')
         elif len(value) == 1:
             return value[0]
         return value
@@ -211,13 +217,12 @@ class AssetLiabilitySchema(BaseModel):
 
     def _generate_rate_from_price(self):
         """Calculate and generate actual growth rate list from price list"""
-        price_length = len(self.price)
-        if price_length < 2:
-            raise ValueError('price list must have at least 2 elements to calculate rates')
+        # Note: This method is only called when self.price is a list with 2+ elements
+        # due to normalization in _normalize_to_scalar_if_single()
         
         # Calculate actual growth rates from price list
         calculated_rates = []
-        for i in range(price_length - 1):
+        for i in range(len(self.price) - 1):
             if self.price[i] == 0:
                 raise ValueError(f'Cannot calculate rate when price[{i}] is 0')
             
@@ -227,7 +232,7 @@ class AssetLiabilitySchema(BaseModel):
             calculated_rates.append(actual_rate)
         
         # If existing rate is scalar, check consistency with first calculated result
-        if not isinstance(self.rate, list) and len(calculated_rates) > 0:
+        if self.rate is not None and not isinstance(self.rate, list) and len(calculated_rates) > 0:
             tolerance = 1e-10
             first_calculated_rate = calculated_rates[0]
             
