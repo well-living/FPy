@@ -132,6 +132,28 @@ class AssetLiabilitySimulator:
                 cashinflow_per_unit=cash_inflow_per_unit or 0.0,
                 rate=rate or 0.0
             )
+    
+    def _safe_divide(self, numerator: float, denominator: float, default: float = 0.0) -> float:
+        """
+        Perform safe division with zero division protection.
+        
+        Parameters
+        ----------
+        numerator : float
+            The numerator value
+        denominator : float
+            The denominator value
+        default : float, optional
+            The default value to return when denominator is zero or very small
+            
+        Returns
+        -------
+        float
+            Result of division or default value
+        """
+        if abs(denominator) < 1e-10:  # Very small number threshold
+            return default
+        return numerator / denominator
         
     def _ensure_list(self, value: Union[float, List[float]]) -> List[float]:
         """
@@ -155,52 +177,200 @@ class AssetLiabilitySimulator:
         """
         Extract and process values from the AssetLiabilitySchema.
         
-        This method extracts values from the al_schema and converts them to the
-        appropriate format for simulation calculations.
+        This method extracts validated values from the al_schema and converts them 
+        to the appropriate format for simulation calculations.
         """
+        # Extract validated values directly (no recalculation needed)
+        self.initial_al_balance = self.al_schema.balance
+        self.initial_al_book_balance = self.al_schema.book_balance or self.al_schema.balance
+
+        # Extract validated unit
+        self.initial_al_unit = self.al_schema.unit
+
         # Extract price (use first value if list)
         if isinstance(self.al_schema.price, list):
             self.initial_price = self.al_schema.price[0]
         else:
-            self.initial_price = self.al_schema.price or 0
-            
-        # Extract or calculate balance
-        if self.al_schema.balance is not None:
-            self.initial_al_balance = self.al_schema.balance
-        else:
-            self.initial_al_balance = self.initial_price * (self.al_schema.unit or 0)
-            
-        # Extract book balance
-        self.initial_al_book_balance = self.al_schema.book_balance or self.initial_al_balance
-        
-        # Calculate initial units
-        self.initial_al_unit = self.al_schema.unit or (
-            self.initial_al_balance / self.initial_price if self.initial_price != 0 else 0
-        )
+            self.initial_price = self.al_schema.price
         
         # Convert al_schema values to lists
         self.cash_inflow_per_unit = self._ensure_list(self.al_schema.cashinflow_per_unit or 0.0)
         self.rate = self._ensure_list(self.al_schema.rate or 0.0)
 
-    def _get_value_for_period(self, array: List[float], period: int) -> float:
+
+    @staticmethod
+    def pad_array(values, n_length, start=0, pad_mode='zero'):
         """
-        Get value for a specific period, using the last value if period exceeds array length.
+        Pad an array to a specified length.
         
         Parameters
         ----------
-        array : List[float]
-            Array of values indexed by period
+        values : list of float
+            The input array to be padded.
+        n_length : int
+            The target length of the output array.
+        start : int, optional
+            The starting position where the input array should be placed in the output array.
+            If negative, it is treated as an offset from the end.
+            Default is 0.
+        pad_mode : {'zero', 'last'}, optional
+            The padding mode for filling empty positions:
+            - 'zero' : Fill with zeros (default)
+            - 'last' : Fill trailing positions with the last value from the input array
+            Default is 'zero'.
+        
+        Returns
+        -------
+        list of float
+            The padded array of length `n_length`.
+        
+        Examples
+        --------
+        >>> values = [1.0, 2.0, 3.0]
+        >>> pad_array(values, 5)
+        [1.0, 2.0, 3.0, 0.0, 0.0]
+        
+        >>> pad_array(values, 5, start=1)
+        [0.0, 1.0, 2.0, 3.0, 0.0]
+        
+        >>> pad_array(values, 5, start=-3)
+        [0.0, 0.0, 1.0, 2.0, 3.0]
+        
+        >>> pad_array(values, 5, pad_mode='last')
+        [1.0, 2.0, 3.0, 3.0, 3.0]
+        """
+        if n_length <= 0:
+            return []
+        
+        if len(values) == 0:
+            return [0.0] * n_length
+        
+        # Initialize result array
+        result = [0.0] * n_length
+        
+        # Handle negative start values
+        if start < 0:
+            # Special case: start = -len(values) means place array at the end
+            if start == -len(values):
+                start = n_length - len(values)
+            else:
+                start = max(0, n_length + start)
+        
+        # Place original values at appropriate positions
+        for i, value in enumerate(values):
+            pos = start + i
+            if 0 <= pos < n_length:
+                result[pos] = value
+        
+        # Handle trailing padding when pad_mode='last'
+        if pad_mode == 'last' and len(values) > 0:
+            last_value = values[-1]
+            # Find the position of the last element from the original array
+            last_pos = -1
+            for i in range(len(values) - 1, -1, -1):
+                pos = start + i
+                if 0 <= pos < n_length:
+                    last_pos = pos
+                    break
+            
+            # Fill positions after the last element with the last value
+            if last_pos >= 0:
+                for i in range(last_pos + 1, n_length):
+                    result[i] = last_value
+        
+        return result
+    
+    @staticmethod
+    def _get_padded_value_at_period(
+            values: List[float],
+            period: int,
+            n_length: Optional[int] = None,
+            start: int = 0,
+            pad_mode: str = 'zero'
+        ) -> float:
+        """
+        Get value for a specific period with configurable out-of-bounds handling and array alignment.
+        
+        Parameters
+        ----------
+        values : List[float]
+            List of values indexed by period.
         period : int
-            Target period index
+            Target period index (0-based).
+        n_length : Optional[int]
+            The assumed total length of the padded array.
+            Required when start < 0 for accurate results.
+            If None and start < 0, a reasonable default will be used.
+        start : int, optional
+            The starting position where the input array should be placed.
+            If negative, it is treated as an offset from the end.
+            Default is 0.
+        pad_mode : {'zero', 'last'}, optional
+            The padding mode for filling empty positions:
+            - 'zero' : Fill with zeros (default)
+            - 'last' : Fill trailing positions with the last value from the input array
+            Default is 'zero'.
             
         Returns
         -------
         float
-            Value for the specified period, or the last value if period is beyond array length
+            Value for the specified period.
+            
+        Raises
+        ------
+        ValueError
+            If start < 0 and n_length is None.
+            
+        Examples
+        --------
+        >>> values = [1.0, 2.0, 3.0]
+        >>> _get_value_for_period(values, 1)  # start >= 0なのでn_length不要
+        2.0
+
+        >>> _get_value_for_period(values, 3)
+        0.0
+
+        >>> _get_value_for_period(values, 1, start=1)  # start >= 0なのでn_length不要
+        1.0
+
+        >>> _get_value_for_period(values, 3, n_length=5, start=-3)  # start < 0なのでn_length必要
+        2.0
+        
+        >>> _get_value_for_period(values, 4, n_length=5, pad_mode='last')
+        3.0
         """
-        if not array:
+        if not values or period < 0:
             return 0.0
-        return array[min(period, len(array) - 1)]
+        
+        # start < 0の場合はn_lengthが必須
+        if start < 0:
+            if n_length is None:
+                raise ValueError("n_length is required when start < 0")
+            if period >= n_length or n_length <= 0:
+                return 0.0
+        
+        # 正のstartまたはn_lengthが提供されている場合
+        actual_start = start
+        if start < 0:
+            if start == -len(values):
+                actual_start = n_length - len(values)
+            else:
+                actual_start = max(0, n_length + start)
+        
+        # Calculate the position in the original values array
+        pos_in_values = period - actual_start
+        
+        if 0 <= pos_in_values < len(values):
+            return values[pos_in_values]
+        elif pos_in_values < 0:
+            return 0.0
+        else:
+            # Position is after the end of values array
+            if pad_mode == 'last':
+                return values[-1]
+            else:
+                return 0.0
+
     
     def simulate(self, n_periods: int) -> pd.DataFrame:
         """
@@ -270,8 +440,8 @@ class AssetLiabilitySimulator:
                 Tax rate applied to capital gains (input parameter).
                 
             capital_gain_tax : float
-                Tax on capital gains, limited by unrealized gains.
-                Calculated as: min(pre_unrealized_gl, capital_cash_inflow_before_tax) * capital_gain_tax_rate
+                Tax on capital gains on the gain portion only.
+                Calculated as: max(0, (price - avg_book_price) * unit_outflow) * capital_gain_tax_rate
                 
             capital_cash_inflow : float
                 Net capital cash inflow after tax.
@@ -325,7 +495,7 @@ class AssetLiabilitySimulator:
         The simulation follows these key principles:
         - Units are sold first (unit_outflow), then purchased (unit_inflow)
         - Book balance is adjusted proportionally when units are sold
-        - Capital gains tax is only applied to realized gains
+        - Capital gains tax is only applied to the gain portion of realized gains
         - All cash flows are processed sequentially within each period
         """
         # Extract values from al_schema
@@ -333,14 +503,23 @@ class AssetLiabilitySimulator:
         
         # Initialize result DataFrame
         columns = [
-            'price', 'pre_cash_balance', 'pre_al_unit', 'pre_al_balance', 
-            'pre_al_book_balance', 'pre_unrealized_gl', 'cash_inflow_per_unit',
+            'price', 
+            'pre_cash_balance', 'pre_al_unit', 
+            'pre_al_balance', 'pre_al_book_balance', 'pre_unrealized_gl', 
+            'cash_inflow_per_unit',
             'income_cash_inflow_before_tax', 'income_gain_tax_rate', 'income_gain_tax',
-            'income_cash_inflow', 'unit_outflow', 'capital_cash_inflow_before_tax',
-            'capital_gain_tax_rate', 'capital_gain_tax', 'capital_cash_inflow',
-            'cash_inflow', 'unit_inflow', 'cash_outflow', 'cash_flow', 'unit_flow',
-            'cash_balance', 'al_unit', 'al_balance', 'al_book_balance', 
-            'unrealized_gl', 'rate'
+            'income_cash_inflow', 
+            'unit_outflow', 
+            'capital_cash_inflow_before_tax', 'capital_gain_tax_rate', 'capital_gain_tax', 
+            'capital_cash_inflow',
+            'cash_inflow', 
+            'unit_inflow', 
+            'cash_outflow', 
+            'cash_flow', 
+            'unit_flow',
+            'cash_balance', 'al_unit', 
+            'al_balance', 'al_book_balance', 'unrealized_gl', 
+            'rate'
         ]
         
         df = pd.DataFrame(index=range(n_periods), columns=columns)
@@ -355,12 +534,12 @@ class AssetLiabilitySimulator:
         
         for period in range(n_periods):
             # Get period-specific values
-            cash_inflow_per_unit = self._get_value_for_period(self.cash_inflow_per_unit, period)
-            capital_cash_inflow_before_tax = self._get_value_for_period(self.capital_cash_inflow_before_tax, period)
-            cash_outflow = self._get_value_for_period(self.cash_outflow, period)
-            rate = self._get_value_for_period(self.rate, period)
-            income_gain_tax_rate = self._get_value_for_period(self.income_gain_tax_rate, period)
-            capital_gain_tax_rate = self._get_value_for_period(self.capital_gain_tax_rate, period)
+            cash_inflow_per_unit = self._get_padded_value_at_period(self.cash_inflow_per_unit, period)
+            capital_cash_inflow_before_tax = self._get_padded_value_at_period(self.capital_cash_inflow_before_tax, period)
+            cash_outflow = self._get_padded_value_at_period(self.cash_outflow, period)
+            rate = self._get_padded_value_at_period(self.rate, period, pad_mode="last")
+            income_gain_tax_rate = self._get_padded_value_at_period(self.income_gain_tax_rate, period, pad_mode="last")
+            capital_gain_tax_rate = self._get_padded_value_at_period(self.capital_gain_tax_rate, period, pad_mode="last")
             
             # Set basic values
             df.loc[period, 'price'] = current_price
@@ -372,7 +551,7 @@ class AssetLiabilitySimulator:
             df.loc[period, 'cash_inflow_per_unit'] = cash_inflow_per_unit
             df.loc[period, 'rate'] = rate
             
-            # Income calculations
+            # Income gain (or loss) calculations
             income_cash_inflow_before_tax = current_al_unit * cash_inflow_per_unit
             df.loc[period, 'income_cash_inflow_before_tax'] = income_cash_inflow_before_tax
             df.loc[period, 'income_gain_tax_rate'] = income_gain_tax_rate
@@ -383,27 +562,37 @@ class AssetLiabilitySimulator:
             income_cash_inflow = income_cash_inflow_before_tax - income_gain_tax
             df.loc[period, 'income_cash_inflow'] = income_cash_inflow
             
-            # Unit outflow calculation (based on capital cash inflow)
-            unit_outflow = capital_cash_inflow_before_tax / current_price if current_price != 0 else 0
+            # Unit outflow calculation (based on capital cash inflow) - WITH ZERO DIVISION PROTECTION
+            unit_outflow = self._safe_divide(capital_cash_inflow_before_tax, current_price, 0.0)
             df.loc[period, 'unit_outflow'] = unit_outflow
             
-            # Capital calculations
+            # Capital calculations - FIXED CAPITAL GAINS TAX CALCULATION
             df.loc[period, 'capital_cash_inflow_before_tax'] = capital_cash_inflow_before_tax
             df.loc[period, 'capital_gain_tax_rate'] = capital_gain_tax_rate
             
-            # Capital gain tax (only on realized gains, limited by unrealized gains)
-            unrealized_gl = current_al_balance - current_al_book_balance
-            capital_gain_tax = min(unrealized_gl, capital_cash_inflow_before_tax) * capital_gain_tax_rate
+            # Capital gain tax - only on the gain portion of sold units
+            if unit_outflow > 0 and current_al_unit > 0:
+                # Calculate average book price per unit
+                avg_book_price = self._safe_divide(current_al_book_balance, current_al_unit, current_price)
+                # Calculate realized gain per unit (only positive gains are taxable)
+                gain_per_unit = max(0, current_price - avg_book_price)
+                # Calculate total realized gain
+                total_realized_gain = gain_per_unit * unit_outflow
+                # Apply tax to realized gain only
+                capital_gain_tax = total_realized_gain * capital_gain_tax_rate
+            else:
+                capital_gain_tax = 0.0
+                
             df.loc[period, 'capital_gain_tax'] = capital_gain_tax
             
             capital_cash_inflow = capital_cash_inflow_before_tax - capital_gain_tax
             df.loc[period, 'capital_cash_inflow'] = capital_cash_inflow
             
-            # Cash flow calculations
+            # Cash flow calculations - WITH ZERO DIVISION PROTECTION
             cash_inflow = income_cash_inflow + capital_cash_inflow
             df.loc[period, 'cash_inflow'] = cash_inflow
             
-            unit_inflow = cash_outflow / current_price if current_price != 0 else 0
+            unit_inflow = self._safe_divide(cash_outflow, current_price, 0.0)
             df.loc[period, 'unit_inflow'] = unit_inflow
             df.loc[period, 'cash_outflow'] = cash_outflow
             
@@ -423,15 +612,16 @@ class AssetLiabilitySimulator:
             new_al_balance = new_al_unit * current_price
             df.loc[period, 'al_balance'] = new_al_balance
             
-            # Book balance adjustment
+            # Book balance adjustment - WITH ZERO DIVISION PROTECTION
             if current_al_unit == 0:
-                book_balance_adjustment_rate = 1
+                book_balance_adjustment_rate = 0  # No units to adjust
+                new_al_book_balance = cash_outflow  # All outflow becomes new book balance
             else:
-                book_balance_adjustment_rate = unit_outflow / current_al_unit
+                book_balance_adjustment_rate = self._safe_divide(unit_outflow, current_al_unit, 0.0)
+                new_al_book_balance = (current_al_book_balance - 
+                                       current_al_book_balance * book_balance_adjustment_rate + 
+                                       cash_outflow)
             
-            new_al_book_balance = (current_al_book_balance - 
-                                   current_al_book_balance * book_balance_adjustment_rate + 
-                                   cash_outflow)
             df.loc[period, 'al_book_balance'] = new_al_book_balance
             
             new_unrealized_gl = new_al_balance - new_al_book_balance
@@ -445,99 +635,3 @@ class AssetLiabilitySimulator:
             current_al_book_balance = new_al_book_balance
             
         return df
-    
-    @classmethod
-    def from_schema(cls, 
-                    al_schema: AssetLiabilitySchema,
-                    initial_cash_balance: float = 0.0,
-                    capital_cash_inflow_before_tax: Union[float, List[float]] = 0,
-                    cash_outflow: Union[float, List[float]] = 0,
-                    income_gain_tax_rate: Union[float, List[float]] = 0.20315,
-                    capital_gain_tax_rate: Union[float, List[float]] = 0.20315):
-        """
-        Create simulator from AssetLiabilitySchema.
-        
-        This is a convenience method that creates a simulator with the al_schema
-        as the primary parameter source.
-        
-        Parameters
-        ----------
-        al_schema : AssetLiabilitySchema
-            Schema containing asset/liability information with the following mapping:
-            - al_schema.price -> initial_price
-            - al_schema.unit -> calculated initial_al_unit
-            - al_schema.balance -> initial_al_balance
-            - al_schema.book_balance -> initial_al_book_balance
-            - al_schema.cashinflow_per_unit -> cash_inflow_per_unit
-            - al_schema.rate -> rate
-        initial_cash_balance : float, default 0.0
-            Initial cash balance (not included in al_schema)
-        capital_cash_inflow_before_tax : Union[float, List[float]], default 0
-            Capital cash inflow before tax for each period
-        cash_outflow : Union[float, List[float]], default 0
-            Cash outflow for each period
-        income_gain_tax_rate : Union[float, List[float]], default 0.20315
-            Tax rate for income gains
-        capital_gain_tax_rate : Union[float, List[float]], default 0.20315
-            Tax rate for capital gains
-            
-        Returns
-        -------
-        AssetLiabilitySimulator
-            Configured simulator instance
-            
-        Notes
-        -----
-        This method is equivalent to calling the constructor with al_schema as the first parameter.
-        """
-        return cls(
-            al_schema=al_schema,
-            initial_cash_balance=initial_cash_balance,
-            capital_cash_inflow_before_tax=capital_cash_inflow_before_tax,
-            cash_outflow=cash_outflow,
-            income_gain_tax_rate=income_gain_tax_rate,
-            capital_gain_tax_rate=capital_gain_tax_rate
-        )
-
-
-# Example usage
-if __name__ == "__main__":
-    # Example 1: Create using AssetLiabilitySchema
-    al_schema = AssetLiabilitySchema(
-        price=10,
-        unit=5,  # This will result in balance = 50
-        book_balance=40,
-        cashinflow_per_unit=[0.5, 0.5, 0.5],
-        rate=[0.05, 0.05, 0.03]
-    )
-    
-    simulator1 = AssetLiabilitySimulator(
-        al_schema=al_schema,
-        initial_cash_balance=100,
-        cash_outflow=[50, 30, 30]
-    )
-    
-    # Example 2: Create without al_schema (al_schema will be created internally)
-    simulator2 = AssetLiabilitySimulator(
-        initial_cash_balance=100,
-        initial_al_balance=50,
-        initial_al_book_balance=40,
-        initial_price=10,
-        rate=[0.05, 0.05, 0.03],
-        cash_inflow_per_unit=[0.5, 0.5, 0.5],
-        capital_cash_inflow_before_tax=[0, 0, 0],
-        cash_outflow=[50, 30, 30]
-    )
-    
-    # Example 3: Using from_schema class method
-    simulator3 = AssetLiabilitySimulator.from_schema(
-        al_schema=al_schema,
-        initial_cash_balance=100,
-        cash_outflow=[50, 30, 30]
-    )
-    
-    result = simulator1.simulate(3)
-    print("Schema object used:")
-    print(simulator1.al_schema)
-    print("\nSimulation result:")
-    print(result)
