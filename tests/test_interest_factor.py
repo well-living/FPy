@@ -1,7 +1,7 @@
 import pytest
 from pydantic import ValidationError
 
-from interest_factor import InterestFactor
+from fpyjp.interest_factor import InterestFactor
 
 
 class TestInterestFactorValidation:
@@ -28,7 +28,7 @@ class TestInterestFactorValidation:
         """Test that rates <= -1 raise ValidationError."""
         with pytest.raises(ValidationError) as exc_info:
             InterestFactor(rate=invalid_rate, time_period=10)
-        assert "Rate must be greater than -1" in str(exc_info.value)
+        assert "Input should be greater than -1" in str(exc_info.value)
     
     @pytest.mark.parametrize("valid_rate", [
         -0.99,   # Just above -1
@@ -155,7 +155,7 @@ class TestFutureValueOfAnnuityCalculations:
         """Test future value of annuity factor with single time period."""
         factor = InterestFactor(rate=0.05, time_period=1)
         result = factor.future_value_of_annuity_factor()
-        assert result == 1.0
+        assert abs(result - 1.0) < 1e-10
     
     def test_calculate_future_value_of_annuity_uses_factor(self):
         """Test that calculate_future_value_of_annuity uses the factor method."""

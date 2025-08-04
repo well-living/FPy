@@ -1,6 +1,6 @@
 from typing import Union
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field
 
 
 class InterestFactor(BaseModel):
@@ -29,14 +29,6 @@ class InterestFactor(BaseModel):
     rate: float = Field(..., gt=-1.0, description="Interest rate per period (must be > -1)")
     time_period: int = Field(..., ge=1, description="Number of time periods (must be >= 1)")
     amount: float = Field(default=1.0, description="Principal amount or base value")
-    
-    @field_validator('rate')
-    @classmethod
-    def validate_rate(cls, v: float) -> float:
-        """Validate that rate is greater than -1."""
-        if v <= -1.0:
-            raise ValueError("Rate must be greater than -1")
-        return v
     
     def future_value_factor(self) -> float:
         """
@@ -389,4 +381,3 @@ class InterestFactor(BaseModel):
         >>> print(f"Present value of annuity: {pva:.2f}")
         """
         return self.present_value_of_annuity_factor() * self.amount
-
