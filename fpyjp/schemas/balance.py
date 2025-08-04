@@ -7,10 +7,10 @@ Defines data models for assets and liabilities using Pydantic V2.
 from typing import List, Optional, Union
 
 import numpy as np
-from pydantic import BaseModel, Field, field_validator, model_validator, computed_field
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 
-class AssetLiability(BaseModel):
+class AssetLiabilitySchema(BaseModel):
     """
     Asset and Liability model for financial calculations.
     
@@ -63,8 +63,7 @@ class AssetLiability(BaseModel):
         description="Cash inflow per unit (interest, dividends, distributions, etc.)"
     )
     rate: Optional[Union[float, List[float]]] = Field(
-        default=0.0,
-        gt=-1,
+        default=None,
         description="Price growth rate (rate of return), must be greater than -1"
     )
     
