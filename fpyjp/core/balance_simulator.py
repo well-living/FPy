@@ -133,7 +133,8 @@ class AssetLiabilitySimulator:
                 rate=rate or 0.0
             )
     
-    def _safe_divide(self, numerator: float, denominator: float, default: float = 0.0) -> float:
+    @staticmethod
+    def _safe_divide(numerator: float, denominator: float, default: float = 0.0) -> float:
         """
         Perform safe division with zero division protection.
         
