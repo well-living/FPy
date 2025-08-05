@@ -1,3 +1,4 @@
+# fpyjp/utils/list_utils.py
 """
 Array utility functions for handling array operations and padding.
 
@@ -5,21 +6,60 @@ This module provides utility functions for array manipulation, padding, and valu
 that are commonly used across financial simulation modules.
 """
 
-from typing import List, Optional
+from typing import Union, Optional, List
 
-
-def pad_array(values: List[float], n_length: int, start: int = 0, pad_mode: str = 'zero') -> List[float]:
+def ensure_list(
+        value: Union[int, float, List[Union[int, float]]]
+    ) -> List[float]:
     """
-    Pad an array to a specified length.
+    Ensure a value is converted to a list of floats.
+    
+    This utility function converts scalar values to single-element lists
+    and ensures all values are of float type.
+    
+    Parameters
+    ----------
+    value : Union[int, float, List[Union[int, float]]]
+        Input value that can be scalar or a list of numbers.
+        
+    Returns
+    -------
+    List[float]
+        List representation of the input value with float elements.
+        
+    Examples
+    --------
+    >>> ensure_list(5)
+    [5.0]
+    >>> ensure_list(3.14)
+    [3.14]
+    >>> ensure_list([1, 2, 3])
+    [1.0, 2.0, 3.0]
+    >>> ensure_list([1.5, 2.5])
+    [1.5, 2.5]
+    """
+    if isinstance(value, (int, float)):
+        return [float(value)]
+    return [float(v) for v in value]
+
+
+def pad_list(
+        values: List[float], 
+        n_length: int, 
+        start: int = 0, 
+        pad_mode: str = 'zero'
+    ) -> List[float]:
+    """
+    Pad an list to a specified length.
     
     Parameters
     ----------
     values : List[float]
-        The input array to be padded.
+        The input list to be padded.
     n_length : int
-        The target length of the output array.
+        The target length of the output list.
     start : int, optional
-        The starting position where the input array should be placed in the output array.
+        The starting position where the input list should be placed in the output array.
         If negative, it is treated as an offset from the end.
         Default is 0.
     pad_mode : {'zero', 'last'}, optional
@@ -31,20 +71,20 @@ def pad_array(values: List[float], n_length: int, start: int = 0, pad_mode: str 
     Returns
     -------
     List[float]
-        The padded array of length `n_length`.
+        The padded list of length `n_length`.
     
     Examples
     --------
-    >>> pad_array([1.0, 2.0, 3.0], 5)
+    >>> pad_list([1.0, 2.0, 3.0], 5)
     [1.0, 2.0, 3.0, 0.0, 0.0]
     
-    >>> pad_array([1.0, 2.0, 3.0], 5, start=1)
+    >>> pad_list([1.0, 2.0, 3.0], 5, start=1)
     [0.0, 1.0, 2.0, 3.0, 0.0]
     
-    >>> pad_array([1.0, 2.0, 3.0], 5, start=-3)
+    >>> pad_list([1.0, 2.0, 3.0], 5, start=-3)
     [0.0, 0.0, 1.0, 2.0, 3.0]
     
-    >>> pad_array([1.0, 2.0, 3.0], 5, pad_mode='last')
+    >>> pad_list([1.0, 2.0, 3.0], 5, pad_mode='last')
     [1.0, 2.0, 3.0, 3.0, 3.0]
     """
     if n_length <= 0:
@@ -196,37 +236,3 @@ def get_padded_value_at_period(
             return values[-1]
         else:
             return 0.0
-
-
-def ensure_list(value) -> List[float]:
-    """
-    Ensure a value is converted to a list of floats.
-    
-    This utility function converts scalar values to single-element lists
-    and ensures all values are of float type.
-    
-    Parameters
-    ----------
-    value : Union[float, int, List[Union[float, int]]]
-        Input value that can be scalar, integer, or list
-        
-    Returns
-    -------
-    List[float]
-        List representation of the input value with float elements
-        
-    Examples
-    --------
-    >>> ensure_list(5)
-    [5.0]
-    >>> ensure_list(3.14)
-    [3.14]
-    >>> ensure_list([1, 2, 3])
-    [1.0, 2.0, 3.0]
-    >>> ensure_list([1.5, 2.5])
-    [1.5, 2.5]
-    """
-    if isinstance(value, (int, float)):
-        return [float(value)]
-    return [float(v) for v in value]
-

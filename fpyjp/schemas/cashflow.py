@@ -1,8 +1,8 @@
+# fpyjp.schemas.cashflow.py
 from typing import List, Optional, Union
 import numpy as np
 from pydantic import BaseModel, Field, field_validator, model_validator
 
-# fpyjp.utils.list_utilからの関数をインポート
 from fpyjp.utils.list_util import ensure_list
 
 
@@ -97,11 +97,7 @@ class CashflowSchema(BaseModel):
         description="End period for cash flow (0-based index)"
     )
     
-    step: Optional[int] = Field(
-        default=None,
-        ge=1,
-        description="Step size for cash flow periods"
-    )
+
     
     @field_validator('amount')
     @classmethod
@@ -179,56 +175,77 @@ class CashflowSchema(BaseModel):
     @model_validator(mode='after')
     def validate_period_consistency(self):
         """
-        Validate consistency between period-related fields and calculate n_periods.
+        Validate consistency between period-related fields and adjust amount array.
         
         - If n_periods is None, calculate it from len(self.amount) if amount is a list
-        - If n_periods is specified, validate it matches len(self.amount) if amount is a list
+        - If n_periods is specified:
+        - If amount is list: use pad_array to adjust to n_periods with start position
+        - If amount is scalar and n_periods >= 2: convert to list and pad with start position
+        - Handle start/end periods with zero padding
         - Ensures that start <= end when both are specified
         
         Returns
         -------
         CashflowSchema
-            Self after validation
+            Self after validation with adjusted amount
             
         Raises
         ------
         ValueError
             If period fields are inconsistent
         """
+        from fpyjp.utils.list_utils import pad_array
+        
+        n_periods = self.n_periods
         start = self.start
         end = self.end
-        n_periods = self.n_periods
-        step = self.step
         
         # Check start <= end
         if start is not None and end is not None:
             if start > end:
                 raise ValueError("End period must be greater than or equal to start period")
         
-        # Handle n_periods calculation and validation
+        # Handle amount adjustment based on n_periods
         if isinstance(self.amount, list):
             amount_length = len(self.amount)
+            
             if n_periods is None:
                 # Calculate n_periods from amount list length
                 self.n_periods = amount_length
             else:
-                # Validate n_periods matches amount list length
-                if n_periods != amount_length:
-                    raise ValueError(
-                        f"n_periods ({n_periods}) must match length of amount list ({amount_length})"
-                    )
+                # Adjust amount based on n_periods and start position
+                if start is not None:
+                    # Use pad_array to handle both truncation and padding with start position
+                    self.amount = pad_array(self.amount, n_periods, start=start)
+                else:
+                    # No start specified - handle truncation/padding from position 0
+                    if n_periods < amount_length:
+                        # Truncate amount list
+                        self.amount = self.amount[:n_periods]
+                    elif n_periods > amount_length:
+                        # Pad amount list from position 0
+                        self.amount = pad_array(self.amount, n_periods, start=0)
+                    # If n_periods == amount_length, no change needed
         else:
-            # amount is scalar - n_periods remains as specified or None
-            pass
+            # amount is scalar
+            if n_periods is not None and n_periods >= 2:
+                # Convert scalar to list
+                if start is not None:
+                    # Create list with scalar value at start position, zero-pad before and after
+                    self.amount = pad_array([self.amount], n_periods, start=start)
+                else:
+                    # Create list with scalar value repeated from position 0
+                    self.amount = [self.amount] * n_periods
+            elif n_periods is None:
+                # Keep as scalar, set n_periods to 1
+                self.n_periods = 1
         
-        # Validate step with start/end
-        if step is not None and start is not None and end is not None:
-            expected_periods = (end - start) // step + 1
-            if self.n_periods is not None and self.n_periods != expected_periods:
-                raise ValueError(
-                    f"n_periods ({self.n_periods}) is inconsistent with calculated "
-                    f"periods from start/end/step ({expected_periods})"
-                )
+        # Handle end period truncation if specified
+        if end is not None and isinstance(self.amount, list):
+            current_length = len(self.amount)
+            # Zero-fill positions after end (but keep the array length)
+            for i in range(end + 1, current_length):
+                self.amount[i] = 0.0
         
         return self
     

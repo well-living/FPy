@@ -1,3 +1,4 @@
+# fpyjp/core/balance_simulator.py
 """
 Asset and Liability Balance Simulator
 
@@ -131,9 +132,11 @@ class AssetLiabilitySimulator:
                 unit=unit,
                 balance=initial_al_balance,
                 book_balance=initial_al_book_balance or initial_al_balance,
-                cashinflow_per_unit=cash_inflow_per_unit or 0.0,
+                cashinflow_per_unit=cash_inflow_per_unit,
                 rate=rate or 0.0
             )
+
+
     
     def _extract_schema_values(self):
         """
@@ -318,10 +321,12 @@ class AssetLiabilitySimulator:
         current_al_unit = self.initial_al_unit
         current_al_balance = self.initial_al_balance
         current_al_book_balance = self.initial_al_book_balance
+
+        print("self.cash_inflow_per_unit",self.cash_inflow_per_unit)
         
         for period in range(n_periods):
             # Get period-specific values using utility function
-            cash_inflow_per_unit = get_padded_value_at_period(self.cash_inflow_per_unit, period)
+            cash_inflow_per_unit = get_padded_value_at_period(self.cash_inflow_per_unit, period, pad_mode="last")
             capital_cash_inflow_before_tax = get_padded_value_at_period(self.capital_cash_inflow_before_tax, period)
             cash_outflow = get_padded_value_at_period(self.cash_outflow, period)
             rate = get_padded_value_at_period(self.rate, period, pad_mode="last")
@@ -418,7 +423,7 @@ class AssetLiabilitySimulator:
             current_price = current_price * (1 + rate)
             current_cash_balance = new_cash_balance
             current_al_unit = new_al_unit
-            current_al_balance = new_al_balance
+            current_al_balance = new_al_balance * (1 + rate)
             current_al_book_balance = new_al_book_balance
             
         return df
