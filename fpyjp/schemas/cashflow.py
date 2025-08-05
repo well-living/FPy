@@ -1,9 +1,15 @@
 # fpyjp.schemas.cashflow.py
 from typing import List, Optional, Union
+
 import numpy as np
 from pydantic import BaseModel, Field, field_validator, model_validator
 
-from fpyjp.utils.list_util import ensure_list
+from fpyjp.utils.list_utils import (
+    ensure_list,  
+    validate_position_within_length, 
+    validate_start_end_consistency, 
+    pad_list,
+)
 
 
 class CashflowSchema(BaseModel):
@@ -122,6 +128,32 @@ class CashflowSchema(BaseModel):
         ------
         ValueError
             If amount contains non-finite values or empty list
+
+        Examples
+        --------
+        >>> # Single number input
+        >>> validate_and_convert_amount(100.0)
+        100.0
+
+        >>> # Single-element list converted to scalar
+        >>> validate_and_convert_amount([500.0])
+        500.0
+
+        >>> # Multiple-element list preserved as list
+        >>> validate_and_convert_amount([100.0, 200.0, 300.0])
+        [100.0, 200.0, 300.0]
+
+        >>> # Mixed int/float list converted to float list
+        >>> validate_and_convert_amount([100, 200.5, 300])
+        [100.0, 200.5, 300.0]
+
+        >>> # Invalid: empty list raises error
+        >>> validate_and_convert_amount([])
+        ValueError: Amount list cannot be empty
+
+        >>> # Invalid: non-finite values raise error
+        >>> validate_and_convert_amount([100.0, float('inf')])
+        ValueError: All amount values must be finite numbers
         """
         if isinstance(v, (int, float)):
             if not np.isfinite(v):
@@ -132,7 +164,8 @@ class CashflowSchema(BaseModel):
             if len(v) == 0:
                 raise ValueError("Amount list cannot be empty")
             
-            # Convert to list of floats using utility function
+            # Convert all list elements to float type for consistency
+            # Note: ensure_list() converts element types, not list structure
             amount_list = ensure_list(v)
             
             # Check for finite values
@@ -153,102 +186,201 @@ class CashflowSchema(BaseModel):
         """
         Validate sign field.
         
+        This validator runs after any Field constraints (ge, le, etc.).
+        If Field constraints fail, their error messages take precedence
+        and this validator will not be executed.
+        
         Parameters
         ----------
         v : int
-            Sign value
+            Sign value that has already passed Field validation
             
         Returns
         -------
         int
-            Validated sign value
+            Validated sign value (must be -1 or 1)
             
         Raises
         ------
         ValueError
-            If sign is not 1 or -1
+            If sign is not -1 (outflow) or 1 (inflow)
+            
+        Notes
+        -----
+        Validation order in Pydantic:
+        1. Field constraints (ge, le, etc.) - if any exist
+        2. Custom field validators (this method)
+        
+        Examples
+        --------
+        >>> # Valid inflow
+        >>> validate_sign(1)
+        1
+        
+        >>> # Valid outflow  
+        >>> validate_sign(-1)
+        -1
+        
+        >>> # Invalid value
+        >>> validate_sign(0)
+        ValueError: Sign must be -1 (outflow) or 1 (inflow)
         """
         if v not in [-1, 1]:
             raise ValueError("Sign must be -1 (outflow) or 1 (inflow)")
         return v
-    
-    @model_validator(mode='after')
-    def validate_period_consistency(self):
+
+    def _validate_all_periods(self, start: Optional[int], end: Optional[int], n_periods: Optional[int]) -> None:
         """
-        Validate consistency between period-related fields and adjust amount array.
+        Validate all period-related constraints in one method.
         
-        - If n_periods is None, calculate it from len(self.amount) if amount is a list
-        - If n_periods is specified:
-        - If amount is list: use pad_array to adjust to n_periods with start position
-        - If amount is scalar and n_periods >= 2: convert to list and pad with start position
-        - Handle start/end periods with zero padding
-        - Ensures that start <= end when both are specified
+        Performs the following validations:
+        1. start < n_periods (if both specified)
+        2. end < n_periods (if both specified)  
+        3. start <= end (if both specified)
         
-        Returns
-        -------
-        CashflowSchema
-            Self after validation with adjusted amount
+        Parameters
+        ----------
+        start : Optional[int]
+            Start position (0-based index)
+        end : Optional[int]
+            End position (0-based index)
+        n_periods : Optional[int]
+            Total number of periods
             
         Raises
         ------
         ValueError
+            If any period constraint is violated
+        """
+        # Validate positions are within n_periods
+        self.validate_position_within_length(start, "start", n_periods)
+        self.validate_position_within_length(end, "end", n_periods)
+        
+        # Validate start <= end consistency
+        self.validate_start_end_consistency(start, end)
+    
+    def _calculate_effective_end(self, amount_list: List[float]) -> Optional[int]:
+        """
+        Calculate the effective end position for a list of amounts.
+        
+        Returns the index of the last non-zero value, or None if all values are zero
+        (indicating no actual cash flow activity).
+        
+        Parameters
+        ----------
+        amount_list : List[float]
+            List of amount values
+            
+        Returns
+        -------
+        Optional[int]
+            Effective end position (0-based index), or None if all values are zero
+            
+        Examples
+        --------
+        >>> _calculate_effective_end([100, 200, 0, 0])  # Returns 1
+        >>> _calculate_effective_end([100, 200, 300])   # Returns 2
+        >>> _calculate_effective_end([0, 0, 0])         # Returns None (no activity)
+        >>> _calculate_effective_end([0, 100, 0])       # Returns 1
+        """
+        # Find the last non-zero value
+        for i in range(len(amount_list) - 1, -1, -1):
+            if amount_list[i] != 0.0:
+                return i
+        
+        # If all values are zero, return None (no cash flow activity)
+        return None
+
+    @model_validator(mode='after')
+    def validate_period_consistency(self):
+        """
+        Process and validate cash flow parameters after model initialization.
+
+        Validation and processing order:
+        1. If n_periods is None, calculate it from len(self.amount) if amount is a list
+        2. Validate all period constraints (start, end positions and consistency)
+        3. Process amount adjustments based on n_periods
+        4. Handle end period truncation with zero padding
+
+        Returns
+        -------
+        CashflowSchema
+            Self after validation with adjusted amount
+
+        Raises
+        ------
+        ValueError
+            If start >= n_periods or end >= n_periods (invalid 0-based indexing)
+            If start > end when both are specified
             If period fields are inconsistent
         """
-        from fpyjp.utils.list_utils import pad_array
         
         n_periods = self.n_periods
         start = self.start
         end = self.end
         
-        # Check start <= end
-        if start is not None and end is not None:
-            if start > end:
-                raise ValueError("End period must be greater than or equal to start period")
+        # 1. Calculate n_periods if None
+        if isinstance(self.amount, list) and n_periods is None:
+            self.n_periods = len(self.amount)
+            n_periods = self.n_periods
+        elif not isinstance(self.amount, list) and n_periods is None:
+            # amount is scalar, set n_periods to 1
+            self.n_periods = 1
+            n_periods = 1
         
-        # Handle amount adjustment based on n_periods
+        # 2. Validate all period constraints
+        self._validate_all_periods(start, end, n_periods)
+        
+        # 3. Handle amount adjustment based on n_periods
         if isinstance(self.amount, list):
             amount_length = len(self.amount)
             
-            if n_periods is None:
-                # Calculate n_periods from amount list length
-                self.n_periods = amount_length
+            # n_periods is now guaranteed to be set
+            if start is not None:
+                # Use pad_list to handle both truncation and padding with start position
+                self.amount = pad_list(self.amount, n_periods, start=start)
             else:
-                # Adjust amount based on n_periods and start position
-                if start is not None:
-                    # Use pad_array to handle both truncation and padding with start position
-                    self.amount = pad_array(self.amount, n_periods, start=start)
-                else:
-                    # No start specified - handle truncation/padding from position 0
-                    if n_periods < amount_length:
-                        # Truncate amount list
-                        self.amount = self.amount[:n_periods]
-                    elif n_periods > amount_length:
-                        # Pad amount list from position 0
-                        self.amount = pad_array(self.amount, n_periods, start=0)
-                    # If n_periods == amount_length, no change needed
+                # No start specified - handle truncation/padding from position 0
+                if n_periods < amount_length:
+                    # Truncate amount list
+                    self.amount = self.amount[:n_periods]
+                    self.start = 0  # Reset start to 0 if truncating
+                elif n_periods > amount_length:
+                    # Pad amount list from position 0
+                    self.amount = pad_list(self.amount, n_periods, start=0)
+                    self.start = 0  # Reset start to 0 if padding
+                # If n_periods == amount_length, no change needed
         else:
             # amount is scalar
-            if n_periods is not None and n_periods >= 2:
+            if n_periods >= 2:
                 # Convert scalar to list
                 if start is not None:
                     # Create list with scalar value at start position, zero-pad before and after
-                    self.amount = pad_array([self.amount], n_periods, start=start)
+                    self.amount = pad_list([self.amount], n_periods, start=start)
                 else:
                     # Create list with scalar value repeated from position 0
                     self.amount = [self.amount] * n_periods
-            elif n_periods is None:
-                # Keep as scalar, set n_periods to 1
-                self.n_periods = 1
+                    self.start = 0  # Reset start to 0 if scalar
+            # If n_periods == 1, keep as scalar (no change needed)
         
-        # Handle end period truncation if specified
+        # 4. Handle end period truncation if specified
         if end is not None and isinstance(self.amount, list):
             current_length = len(self.amount)
             # Zero-fill positions after end (but keep the array length)
             for i in range(end + 1, current_length):
                 self.amount[i] = 0.0
         
+        # 5. Set effective end position if end is None
+        if end is None and isinstance(self.amount, list):
+            self.end = self._calculate_effective_end(self.amount)
+        elif end is None and not isinstance(self.amount, list):
+            # For scalar amounts, end is always 0
+            self.end = 0
+        
         return self
-    
+
+
+
     def get_periods_count(self) -> Optional[int]:
         """
         Get the total number of periods for this cash flow.

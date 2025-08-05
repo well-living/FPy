@@ -42,7 +42,87 @@ def ensure_list(
         return [float(value)]
     return [float(v) for v in value]
 
+def validate_position_within_length(position: Optional[int], position_name: str, length: Optional[int]) -> Optional[int]:
+    """
+    Validate that a position is within valid range for given length and normalize negative indices.
+    
+    Negative positions are converted to positive indices (e.g., -1 becomes length-1).
+    This follows Python's list indexing convention.
+    
+    Parameters
+    ----------
+    position : Optional[int]
+        Position value (0-based index, negative values allowed)
+    position_name : str
+        Name of the position for error messages ("start", "end", etc.)
+    length : Optional[int]
+        Total length of the sequence
+        
+    Returns
+    -------
+    Optional[int]
+        Normalized positive position, or None if position is None
+        
+    Raises
+    ------
+    ValueError
+        If position is out of valid range after normalization
+        
+    Examples
+    --------
+    >>> # With length = 5
+    >>> validate_position_within_length(-1, "end", 5)  # Returns 4
+    >>> validate_position_within_length(-5, "start", 5)  # Returns 0
+    >>> validate_position_within_length(-6, "start", 5)  # Raises ValueError
+    >>> validate_position_within_length(5, "end", 5)    # Raises ValueError
+    """
+    if position is None or length is None:
+        return None
+    
+    # Convert negative position to positive (Python-style indexing)
+    if position < 0:
+        normalized_position = length + position
+    else:
+        normalized_position = position
+    
+    # Validate normalized position is within valid range [0, length)
+    if normalized_position < 0 or normalized_position >= length:
+        if position < 0:
+            raise ValueError(
+                f"{position_name.capitalize()} position ({position}) resolves to "
+                f"index {normalized_position}, which is out of valid range [0, {length})"
+            )
+        else:
+            raise ValueError(
+                f"{position_name.capitalize()} position ({position}) must be less than "
+                f"length ({length}) for valid 0-based indexing"
+            )
+    
+    return normalized_position
 
+def validate_start_end_consistency(start: Optional[int], end: Optional[int]) -> None:
+    """
+    Validate that end position is greater than or equal to start position.
+    
+    Parameters
+    ----------
+    start : Optional[int]
+        Start position (0-based index)
+    end : Optional[int]
+        End position (0-based index)
+        
+    Raises
+    ------
+    ValueError
+        If start > end when both are specified
+    """
+    if start is not None and end is not None:
+        if start > end:
+            raise ValueError(
+                f"End position ({end}) must be greater than or equal to "
+                f"start position ({start})"
+            )
+        
 def pad_list(
         values: List[float], 
         n_length: int, 
