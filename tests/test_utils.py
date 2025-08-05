@@ -7,10 +7,67 @@ including edge cases, error conditions, and various parameter combinations.
 
 import pytest
 
+from fpyjp.utils.math_utils import safe_divide
 from fpyjp.utils.list_utils import ensure_list, pad_list, get_padded_value_at_period
 
 
-class TestPadArray:
+class TestSafeDivide:
+
+    @pytest.mark.parametrize("numerator, denominator, default, expected", [
+        # 正常系：int / int -> float
+        (10, 2, 0.0, 5.0),
+        # 正常系：float / float
+        (5.5, 2.2, 0.0, 5.5 / 2.2),
+        # default が int のときも受け入れる
+        (1.0, 0.0, 7, 7.0),
+        # 閾値ちょうど1e-10は除算を許可
+        (1.0, 1e-10, 99.0, 1.0 / 1e-10),
+    ])
+    def test_valid(self, numerator, denominator, default, expected):
+        result = safe_divide(numerator, denominator, default)
+        assert isinstance(result, float)
+        assert result == pytest.approx(expected)
+
+    @pytest.mark.parametrize("denominator", [0, 1e-11, -1e-11])
+    def test_zero_or_near_zero(self, denominator):
+        for default in (0.0, 3.14, -5):
+            result = safe_divide(123.0, denominator, default)
+            assert result == float(default)
+
+    def test_precision_boundary(self):
+        # 閾値をわずかに上回るとき
+        numer = 9.0
+        denom = 1e-10 + 1e-12
+        expected = numer / denom
+        assert safe_divide(numer, denom, 0.0) == pytest.approx(expected)
+
+    def test_type_errors_single(self):
+        # numerator のみ不正
+        with pytest.raises(TypeError) as excinfo:
+            safe_divide("foo", 1.0, 0.0)
+        assert "numerator must be int or float, got str" in str(excinfo.value)
+
+        # denominator のみ不正
+        with pytest.raises(TypeError) as excinfo:
+            safe_divide(1.0, None, 0.0)
+        assert "denominator must be int or float, got NoneType" in str(excinfo.value)
+
+        # default のみ不正
+        with pytest.raises(TypeError) as excinfo:
+            safe_divide(1.0, 2.0, default=[])
+        assert "default must be int or float, got list" in str(excinfo.value)
+
+    def test_type_errors_multiple(self):
+        # 複数引数が不正：文字列・None・リスト
+        with pytest.raises(TypeError) as excinfo:
+            safe_divide("10", None, default=[])
+        msg = str(excinfo.value)
+        assert "numerator must be int or float, got str" in msg
+        assert "denominator must be int or float, got NoneType" in msg
+        assert "default must be int or float, got list" in msg
+
+
+class TestPadList:
     """Test cases for the pad_list function."""
     
     def test_basic_padding_zero_mode(self):

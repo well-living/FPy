@@ -23,16 +23,18 @@ def safe_divide(numerator: float, denominator: float, default: float = 0.0) -> f
     Raises
     ------
     TypeError
-        If any of the arguments is not a float or int.
+        If any of the arguments is not a float or int. All type errors are reported together.
     """
-    if not isinstance(numerator, (int, float)):
-        raise TypeError(f"numerator must be int or float, got {type(numerator).__name__}")
-    if not isinstance(denominator, (int, float)):
-        raise TypeError(f"denominator must be int or float, got {type(denominator).__name__}")
-    if not isinstance(default, (int, float)):
-        raise TypeError(f"default must be int or float, got {type(default).__name__}")
+    invalid_args = []
+    for name, value in [('numerator', numerator), ('denominator', denominator), ('default', default)]:
+        if not isinstance(value, (int, float)):
+            invalid_args.append(f"{name} must be int or float, got {type(value).__name__}")
+
+    if invalid_args:
+        raise TypeError(" | ".join(invalid_args))
 
     if abs(denominator) < 1e-10:
         return float(default)
 
     return float(numerator) / float(denominator)
+
