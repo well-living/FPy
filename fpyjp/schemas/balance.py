@@ -19,6 +19,8 @@ class AssetLiabilitySchema(BaseModel):
     
     Attributes
     ----------
+    name : str
+        Name of the asset or liability, must be between 1 and 20 characters
     price : Optional[Union[float, List[float]]]
         Price per unit of the asset or liability
     unit : Optional[float]
@@ -41,6 +43,12 @@ class AssetLiabilitySchema(BaseModel):
         - `price[i] * (1 + rate[i]) = price[i+1] for all i`
     """
     
+    name: str = Field(
+        default=None,
+        min_length=1,
+        max_length=20,
+        description="Name of the asset or liability"
+    )
     price: Optional[Union[float, List[float]]] = Field(
         default=None,
         description="Price per unit of the asset or liability"
