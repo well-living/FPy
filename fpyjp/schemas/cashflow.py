@@ -179,10 +179,11 @@ class CashflowSchema(BaseModel):
     @model_validator(mode='after')
     def validate_period_consistency(self):
         """
-        Validate consistency between period-related fields.
+        Validate consistency between period-related fields and calculate n_periods.
         
-        Ensures that start <= end when both are specified, and that
-        n_periods is consistent with start/end periods when applicable.
+        - If n_periods is None, calculate it from len(self.amount) if amount is a list
+        - If n_periods is specified, validate it matches len(self.amount) if amount is a list
+        - Ensures that start <= end when both are specified
         
         Returns
         -------
@@ -202,47 +203,38 @@ class CashflowSchema(BaseModel):
         # Check start <= end
         if start is not None and end is not None:
             if start > end:
-                raise ValueError("Start period must be less than or equal to end period")
+                raise ValueError("End period must be greater than or equal to start period")
         
-        # Check consistency with n_periods
-        if n_periods is not None:
-            if isinstance(self.amount, list) and len(self.amount) != n_periods:
-                raise ValueError(
-                    f"Length of amount list ({len(self.amount)}) must match "
-                    f"n_periods ({n_periods})"
-                )
+        # Handle n_periods calculation and validation
+        if isinstance(self.amount, list):
+            amount_length = len(self.amount)
+            if n_periods is None:
+                # Calculate n_periods from amount list length
+                self.n_periods = amount_length
+            else:
+                # Validate n_periods matches amount list length
+                if n_periods != amount_length:
+                    raise ValueError(
+                        f"n_periods ({n_periods}) must match length of amount list ({amount_length})"
+                    )
+        else:
+            # amount is scalar - n_periods remains as specified or None
+            pass
         
         # Validate step with start/end
         if step is not None and start is not None and end is not None:
             expected_periods = (end - start) // step + 1
-            if n_periods is not None and n_periods != expected_periods:
+            if self.n_periods is not None and self.n_periods != expected_periods:
                 raise ValueError(
-                    f"n_periods ({n_periods}) is inconsistent with calculated "
+                    f"n_periods ({self.n_periods}) is inconsistent with calculated "
                     f"periods from start/end/step ({expected_periods})"
-                )
-        
-        # Check amount list length consistency
-        if isinstance(self.amount, list):
-            amount_length = len(self.amount)
-            
-            if start is not None and end is not None and step is not None:
-                expected_length = (end - start) // step + 1
-                if amount_length != expected_length:
-                    raise ValueError(
-                        f"Amount list length ({amount_length}) doesn't match "
-                        f"expected periods from start/end/step ({expected_length})"
-                    )
-            elif n_periods is not None and amount_length != n_periods:
-                raise ValueError(
-                    f"Amount list length ({amount_length}) doesn't match "
-                    f"n_periods ({n_periods})"
                 )
         
         return self
     
     def get_periods_count(self) -> Optional[int]:
         """
-        Calculate the total number of periods for this cash flow.
+        Get the total number of periods for this cash flow.
         
         Returns
         -------
@@ -258,19 +250,12 @@ class CashflowSchema(BaseModel):
         >>> cf = CashflowSchema(n_periods=5)
         >>> cf.get_periods_count()
         5
+        
+        >>> cf = CashflowSchema(amount=[100, 200, 300])
+        >>> cf.get_periods_count()
+        3
         """
-        if self.n_periods is not None:
-            return self.n_periods
-        
-        if isinstance(self.amount, list):
-            return len(self.amount)
-        
-        if (self.start is not None and 
-            self.end is not None and 
-            self.step is not None):
-            return (self.end - self.start) // self.step + 1
-        
-        return None
+        return self.n_periods
     
     def get_amount_at_period(self, period: int) -> float:
         """
@@ -291,14 +276,94 @@ class CashflowSchema(BaseModel):
         >>> cf = CashflowSchema(amount=[100, 200, 300])
         >>> cf.get_amount_at_period(1)
         200.0
+        >>> cf.get_amount_at_period(5)
+        0.0
         
-        >>> cf_scalar = CashflowSchema(amount=500.0)
+        >>> cf_scalar = CashflowSchema(amount=500.0, n_periods=3)
         >>> cf_scalar.get_amount_at_period(0)
         500.0
+        >>> cf_scalar.get_amount_at_period(2)
+        500.0
+        >>> cf_scalar.get_amount_at_period(5)
+        0.0
+        
+        >>> cf_single = CashflowSchema(amount=1000.0)
+        >>> cf_single.get_amount_at_period(0)
+        1000.0
+        >>> cf_single.get_amount_at_period(1)
+        0.0
         """
         if isinstance(self.amount, list):
             if 0 <= period < len(self.amount):
                 return self.amount[period]
             return 0.0
         else:
-            return self.amount
+            # スカラーの場合の処理
+            n_periods = self.get_periods_count()
+            if n_periods is None or n_periods == 1:
+                # n_periodsが指定されていない、または1の場合は期間0のみ
+                return self.amount if period == 0 else 0.0
+            else:
+                # n_periodsが指定されている場合はその期間内で同じ値を返す
+                return self.amount if 0 <= period < n_periods else 0.0
+    
+    def to_padded_array(self, total_periods: int, start_period: Optional[int] = None) -> List[float]:
+        """
+        Convert cash flow to padded array.
+        
+        This method creates a padded array representation of the cash flow,
+        useful for time-series calculations and simulations.
+        
+        Parameters
+        ----------
+        total_periods : int
+            Total length of the output array
+        start_period : Optional[int]
+            Starting position for the cash flow. If None, uses self.start
+            
+        Returns
+        -------
+        List[float]
+            Padded array of cash flow amounts
+            
+        Raises
+        ------
+        ValueError
+            If required parameters are missing
+            
+        Examples
+        --------
+        >>> cf = CashflowSchema(amount=1000.0, start=2, n_periods=3)
+        >>> cf.to_padded_array(10)
+        [0.0, 0.0, 1000.0, 1000.0, 1000.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+        
+        >>> cf = CashflowSchema(amount=[500.0, 600.0], start=1)
+        >>> cf.to_padded_array(5)
+        [0.0, 500.0, 600.0, 0.0, 0.0]
+        """
+        # Determine start position
+        start_pos = start_period if start_period is not None else self.start
+        if start_pos is None:
+            start_pos = 0  # デフォルトは0から開始
+        
+        # Create array of cash flow amounts
+        if isinstance(self.amount, list):
+            amount_values = self.amount
+        else:
+            # スカラーの場合
+            if self.n_periods is None:
+                # n_periodsが指定されていない場合は1期間とする
+                amount_values = [self.amount]
+            else:
+                amount_values = [self.amount] * self.n_periods
+        
+        # Create padded array
+        result = [0.0] * total_periods
+        
+        # Fill in the cash flow values at appropriate positions
+        for i, value in enumerate(amount_values):
+            pos = start_pos + i
+            if 0 <= pos < total_periods:
+                result[pos] = value
+        
+        return result
