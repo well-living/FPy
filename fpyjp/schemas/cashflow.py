@@ -295,24 +295,50 @@ class CashflowSchema(BaseModel):
     def validate_period_consistency(self):
         """
         Process and validate cash flow parameters after model initialization.
+        
+        This validator handles the complex interactions between n_periods, amount, start, and end
+        parameters to ensure consistency and proper cash flow representation.
 
         Validation and processing order:
-        1. If n_periods is None, calculate it from len(self.amount) if amount is a list
-        2. Validate all period constraints (start, end positions and consistency)
-        3. Process amount adjustments based on n_periods
-        4. Handle end period truncation with zero padding
+        1. Calculate n_periods if None based on amount type and length
+        2. Validate all period constraints (bounds checking and consistency)
+        3. Process amount adjustments:
+        - Convert between scalar and list representations as needed
+        - Handle positioning with start parameter using pad_list
+        - Apply truncation or zero-padding to match n_periods
+        4. Apply end period truncation by zero-filling positions after end
+        5. Set effective end position for automatic end detection
+
+        Processing Logic:
+        - If amount is list and n_periods is None: n_periods = len(amount)
+        - If amount is scalar and n_periods is None: n_periods = 1
+        - When start is specified: Uses pad_list for precise positioning
+        - When start is None: Operations begin from position 0
+        - End truncation: Zero-fills positions after end index
+        - Effective end: Automatically calculated for non-zero trailing values
 
         Returns
         -------
         CashflowSchema
-            Self after validation with adjusted amount
+            Self after validation with processed amount, n_periods, start, and end
 
         Raises
         ------
         ValueError
-            If start >= n_periods or end >= n_periods (invalid 0-based indexing)
+            If start >= n_periods (invalid 0-based indexing)
+            If end >= n_periods (invalid 0-based indexing)  
             If start > end when both are specified
-            If period fields are inconsistent
+            If any period field constraints are violated
+
+        Examples
+        --------
+        >>> # Scalar amount with positioning
+        >>> cf = CashflowSchema(amount=100, n_periods=5, start=2)
+        >>> # Results in amount=[0, 0, 100, 0, 0], start=2, end=2
+        
+        >>> # List amount with end truncation
+        >>> cf = CashflowSchema(amount=[100, 200, 300], end=1)  
+        >>> # Results in amount=[100, 200, 0], end=1
         """
         
         n_periods = self.n_periods
@@ -378,7 +404,6 @@ class CashflowSchema(BaseModel):
             self.end = 0
         
         return self
-
 
 
     def get_periods_count(self) -> Optional[int]:
