@@ -1,5 +1,6 @@
 # FPy/tests/test_asset_liability_simulator_with_google_sheets.py
 # https://github.com/googleapis/google-api-python-client?tab=readme-ov-file
+
 import os
 import pytest
 import pandas as pd
@@ -41,7 +42,7 @@ class GoogleSheetsClient:
             raise ValueError("API key is required")
         self.service = build('sheets', 'v4', developerKey=api_key)
     
-    def get_sheet_data(self, spreadsheet_id: str, range_name: str = "A1:AB10", sheet_name: str = "Main") -> pd.DataFrame:
+    def get_sheet_data(self, spreadsheet_id: str, sheet_name: str = "Main", range_name: str = "A1:AB10") -> pd.DataFrame:
         """スプレッドシートからデータを取得"""
         try:
             # シート名を含む範囲指定
@@ -115,113 +116,86 @@ class GoogleSheetsClient:
             raise
 
 
-def create_simulator_from_spreadsheet():
+def create_simulator_from_spreadsheet(sheet_name: str = "Main", range_name: str = "A1:AB10"):
     """スプレッドシートデータからシミュレータを作成"""
     api_key = os.getenv('GOOGLE_SHEETS_API_KEY')
     sheet_id = os.getenv('TEST_SPREADSHEET_ID')
     
     if not api_key or not sheet_id:
-        # テスト用のデフォルトデータ
-        return create_default_simulator()
+        raise ValueError("Google Sheets environment variables (GOOGLE_SHEETS_API_KEY, TEST_SPREADSHEET_ID) are required")
     
-    try:
-        client = GoogleSheetsClient(api_key)
-        df = client.get_sheet_data(sheet_id, "A1:AB10", "Main")
-        
-        if df.empty:
-            return create_default_simulator()
-        
-        # 必要な列の存在確認
-        required_initial_columns = ['price', 'pre_cash_balance', 'pre_al_balance', 'pre_al_book_balance']
-        required_series_columns = ['cash_inflow_per_unit', 'income_gain_tax_rate', 'capital_cash_inflow_before_tax', 
-                                  'capital_gain_tax_rate', 'cash_outflow', 'rate']
-        
-        missing_initial = [col for col in required_initial_columns if col not in df.columns]
-        missing_series = [col for col in required_series_columns if col not in df.columns]
-        
-        if missing_initial:
-            raise ValueError(f"Required initial value columns missing from spreadsheet: {missing_initial}")
-        if missing_series:
-            raise ValueError(f"Required time series columns missing from spreadsheet: {missing_series}")
-        
-        # 初期値（最初の行から取得）
-        first_row = df.iloc[0]
-        initial_price = first_row['price']
-        initial_cash_balance = first_row['pre_cash_balance']
-        initial_al_balance = first_row['pre_al_balance']
-        initial_al_book_balance = first_row['pre_al_book_balance']
-        
-        # 値の妥当性チェック
-        if pd.isna(initial_price):
-            raise ValueError("initial_price cannot be NaN")
-        if pd.isna(initial_cash_balance):
-            raise ValueError("initial_cash_balance cannot be NaN")
-        if pd.isna(initial_al_balance):
-            raise ValueError("initial_al_balance cannot be NaN")
-        if pd.isna(initial_al_book_balance):
-            raise ValueError("initial_al_book_balance cannot be NaN")
-        
-        # 全期間のデータ（リスト）
-        cash_inflow_per_unit = df['cash_inflow_per_unit'].tolist()
-        income_gain_tax_rate = df['income_gain_tax_rate'].tolist()
-        capital_cash_inflow_before_tax = df['capital_cash_inflow_before_tax'].tolist()
-        capital_gain_tax_rate = df['capital_gain_tax_rate'].tolist()
-        cash_outflow = df['cash_outflow'].tolist()
-        rate = df['rate'].tolist()
-        
-        # 初期単位数を計算
-        initial_unit = initial_al_balance / initial_price if initial_price != 0 else 0.0
-        
-        # AssetLiabilitySchemaを作成
-        schema = AssetLiabilitySchema(
-            price=initial_price,
-            unit=initial_unit,
-            balance=initial_al_balance,
-            book_balance=initial_al_book_balance,
-            cashinflow_per_unit=cash_inflow_per_unit,
-            rate=rate
-        )
-        
-        # シミュレータを作成
-        simulator = AssetLiabilitySimulator(
-            al_schema=schema,
-            initial_cash_balance=initial_cash_balance,
-            capital_cash_inflow_before_tax=capital_cash_inflow_before_tax,
-            cash_outflow=cash_outflow,
-            income_gain_tax_rate=income_gain_tax_rate,
-            capital_gain_tax_rate=capital_gain_tax_rate
-        )
-        
-        print(f"Created simulator from spreadsheet data: {len(df)} periods")
-        return simulator, df
-        
-    except Exception as e:
-        print(f"Failed to create simulator from spreadsheet: {e}")
-        return create_default_simulator()
-
-
-def create_default_simulator():
-    """デフォルトのテスト用シミュレータ"""
+    client = GoogleSheetsClient(api_key)
+    df = client.get_sheet_data(sheet_id, sheet_name, range_name)
+    
+    if df.empty:
+        raise ValueError("No data retrieved from spreadsheet")
+    
+    # 必要な列の存在確認
+    required_initial_columns = ['price', 'pre_cash_balance', 'pre_al_balance', 'pre_al_book_balance']
+    required_series_columns = ['cash_inflow_per_unit', 'income_gain_tax_rate', 'capital_cash_inflow_before_tax', 
+                              'capital_gain_tax_rate', 'cash_outflow', 'rate']
+    
+    missing_initial = [col for col in required_initial_columns if col not in df.columns]
+    missing_series = [col for col in required_series_columns if col not in df.columns]
+    
+    if missing_initial:
+        raise ValueError(f"Required initial value columns missing from spreadsheet: {missing_initial}")
+    if missing_series:
+        raise ValueError(f"Required time series columns missing from spreadsheet: {missing_series}")
+    
+    # 初期値（最初の行から取得）
+    first_row = df.iloc[0]
+    initial_price = first_row['price']
+    initial_cash_balance = first_row['pre_cash_balance']
+    initial_al_balance = first_row['pre_al_balance']
+    initial_al_book_balance = first_row['pre_al_book_balance']
+    
+    # 値の妥当性チェック
+    if pd.isna(initial_price):
+        raise ValueError("initial_price cannot be NaN")
+    if pd.isna(initial_cash_balance):
+        raise ValueError("initial_cash_balance cannot be NaN")
+    if pd.isna(initial_al_balance):
+        raise ValueError("initial_al_balance cannot be NaN")
+    if pd.isna(initial_al_book_balance):
+        raise ValueError("initial_al_book_balance cannot be NaN")
+    
+    # 全期間のデータ（リスト）
+    cash_inflow_per_unit = df['cash_inflow_per_unit'].tolist()
+    income_gain_tax_rate = df['income_gain_tax_rate'].tolist()
+    capital_cash_inflow_before_tax = df['capital_cash_inflow_before_tax'].tolist()
+    capital_gain_tax_rate = df['capital_gain_tax_rate'].tolist()
+    cash_outflow = df['cash_outflow'].tolist()
+    rate = df['rate'].tolist()
+    
+    # 初期単位数を計算
+    initial_unit = initial_al_balance / initial_price if initial_price != 0 else 0.0
+    
+    # AssetLiabilitySchemaを作成
     schema = AssetLiabilitySchema(
-        price=10.0,
-        unit=5.0,
-        balance=50.0,
-        book_balance=40.0,
-        cashinflow_per_unit=[0.5, 0.5, 0.5],
-        rate=[0.05, 0.05, 0.03]
+        price=initial_price,
+        unit=initial_unit,
+        balance=initial_al_balance,
+        book_balance=initial_al_book_balance,
+        cashinflow_per_unit=cash_inflow_per_unit,
+        rate=rate
     )
+    
+    # シミュレータを作成
     simulator = AssetLiabilitySimulator(
         al_schema=schema,
-        initial_cash_balance=100.0,
-        capital_cash_inflow_before_tax=[0, 0, 0],
-        cash_outflow=[50, 30, 30],
-        income_gain_tax_rate=[0.20315, 0.20315, 0.20315],
-        capital_gain_tax_rate=[0.20315, 0.20315, 0.20315]
+        initial_cash_balance=initial_cash_balance,
+        capital_cash_inflow_before_tax=capital_cash_inflow_before_tax,
+        cash_outflow=cash_outflow,
+        income_gain_tax_rate=income_gain_tax_rate,
+        capital_gain_tax_rate=capital_gain_tax_rate
     )
-    return simulator, pd.DataFrame()
+    
+    print(f"Created simulator from spreadsheet data: {len(df)} periods")
+    return simulator, df
 
 
-def debug_spreadsheet_data():
+def debug_spreadsheet_data(sheet_name: str = "Main", range_name: str = "A1:AB10"):
     """スプレッドシートデータのデバッグ"""
     api_key = os.getenv('GOOGLE_SHEETS_API_KEY')
     sheet_id = os.getenv('TEST_SPREADSHEET_ID')
@@ -229,7 +203,7 @@ def debug_spreadsheet_data():
     if api_key and sheet_id:
         try:
             client = GoogleSheetsClient(api_key)
-            df = client.get_sheet_data(sheet_id, "A1:AB10", "Main")
+            df = client.get_sheet_data(sheet_id, sheet_name, range_name)
             
             print(f"\n=== Spreadsheet Debug Info ===")
             print(f"DataFrame shape: {df.shape}")
@@ -288,33 +262,10 @@ def test_api_connection():
         pytest.skip("Environment variables not set")
     
     client = GoogleSheetsClient(api_key)
-    df = client.get_sheet_data(sheet_id, "A1:D5", "Main")
+    df = client.get_sheet_data(sheet_id, "Main", "A1:D5")
     
     assert isinstance(df, pd.DataFrame), "Should return a DataFrame"
     print(f"API connection test passed: {df.shape}")
-
-
-def test_simulation_with_spreadsheet_data():
-    """スプレッドシートデータを使用したシミュレーションテスト"""
-    simulator_result = create_simulator_from_spreadsheet()
-    
-    if isinstance(simulator_result, tuple):
-        simulator, sheet_df = simulator_result
-    else:
-        simulator = simulator_result
-        sheet_df = pd.DataFrame()
-    
-    # シミュレーション実行
-    periods = 3 if sheet_df.empty else len(sheet_df)
-    result = simulator.simulate(periods)
-    
-    assert isinstance(result, pd.DataFrame), "Simulation should return DataFrame"
-    assert len(result) == periods, f"Should have {periods} periods, got {len(result)}"
-    assert 'price' in result.columns, "Should have 'price' column"
-    assert 'cash_balance' in result.columns, "Should have 'cash_balance' column"
-    
-    print(f"Simulation with spreadsheet data test passed: {result.shape}")
-    return simulator, result, sheet_df
 
 
 def test_spreadsheet_vs_simulation():
@@ -329,16 +280,7 @@ def test_spreadsheet_vs_simulation():
         pytest.skip("Environment variables not set")
     
     # スプレッドシートデータからシミュレータを作成
-    simulator_result = create_simulator_from_spreadsheet()
-    
-    if isinstance(simulator_result, tuple):
-        simulator, sheet_df = simulator_result
-    else:
-        simulator = simulator_result
-        sheet_df = pd.DataFrame()
-    
-    # テスト失敗にする（skipではなく）
-    assert not sheet_df.empty, f"No data found in spreadsheet. DataFrame shape: {sheet_df.shape}"
+    simulator, sheet_df = create_simulator_from_spreadsheet()
     
     # シミュレーション実行
     sim_df = simulator.simulate(len(sheet_df))
@@ -390,7 +332,7 @@ def test_spreadsheet_vs_simulation():
     
     print(f"Comparison summary: {matches}/{total_comparisons} matches ({match_rate:.1f}%)")
     
-    # 一定の一致率を要求（例：70%以上）
+    # 一定の一致率を要求（例：99%以上）
     required_match_rate = 99.0
     assert match_rate >= required_match_rate, f"Match rate {match_rate:.1f}% is below required {required_match_rate}%"
     
@@ -407,7 +349,7 @@ def test_parameter_extraction():
     
     try:
         client = GoogleSheetsClient(api_key)
-        df = client.get_sheet_data(sheet_id, "A1:AB10", "Main")
+        df = client.get_sheet_data(sheet_id, "Main", "A1:AB10")
         
         if df.empty:
             pytest.fail("Spreadsheet data is empty")
