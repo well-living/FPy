@@ -42,11 +42,19 @@ class GoogleSheetsClient:
             raise ValueError("API key is required")
         self.service = build('sheets', 'v4', developerKey=api_key)
     
-    def get_sheet_data(self, spreadsheet_id: str, sheet_name: str = "Main", range_name: str = "A1:AB10") -> pd.DataFrame:
+    def get_sheet_data(self, spreadsheet_id: str, sheet_name: str = "Main", range_name: str = None, max_rows: int = None) -> pd.DataFrame:
         """スプレッドシートからデータを取得"""
         try:
-            # シート名を含む範囲指定
-            full_range = f"{sheet_name}!{range_name}"
+            # 範囲の決定ロジック
+            if range_name is not None:
+                # 明示的に範囲が指定された場合
+                full_range = f"{sheet_name}!{range_name}"
+            elif max_rows is not None:
+                # 最大行数が指定された場合
+                full_range = f"{sheet_name}!A1:AB{max_rows}"
+            else:
+                # どちらも指定されていない場合は全行取得
+                full_range = f"{sheet_name}!A:AB"
             
             result = self.service.spreadsheets().values().get(
                 spreadsheetId=spreadsheet_id, range=full_range
@@ -116,7 +124,7 @@ class GoogleSheetsClient:
             raise
 
 
-def create_simulator_from_spreadsheet(sheet_name: str = "Main", range_name: str = "A1:AB10"):
+def create_simulator_from_spreadsheet(sheet_name: str = "Main", range_name: str = None, max_rows: int = None):
     """スプレッドシートデータからシミュレータを作成"""
     api_key = os.getenv('GOOGLE_SHEETS_API_KEY')
     sheet_id = os.getenv('TEST_SPREADSHEET_ID')
@@ -125,7 +133,7 @@ def create_simulator_from_spreadsheet(sheet_name: str = "Main", range_name: str 
         raise ValueError("Google Sheets environment variables (GOOGLE_SHEETS_API_KEY, TEST_SPREADSHEET_ID) are required")
     
     client = GoogleSheetsClient(api_key)
-    df = client.get_sheet_data(sheet_id, sheet_name, range_name)
+    df = client.get_sheet_data(sheet_id, sheet_name, range_name, max_rows)
     
     if df.empty:
         raise ValueError("No data retrieved from spreadsheet")
@@ -195,7 +203,7 @@ def create_simulator_from_spreadsheet(sheet_name: str = "Main", range_name: str 
     return simulator, df
 
 
-def debug_spreadsheet_data(sheet_name: str = "Main", range_name: str = "A1:AB10"):
+def debug_spreadsheet_data(sheet_name: str = "Main", range_name: str = None, max_rows: int = None):
     """スプレッドシートデータのデバッグ"""
     api_key = os.getenv('GOOGLE_SHEETS_API_KEY')
     sheet_id = os.getenv('TEST_SPREADSHEET_ID')
@@ -203,7 +211,7 @@ def debug_spreadsheet_data(sheet_name: str = "Main", range_name: str = "A1:AB10"
     if api_key and sheet_id:
         try:
             client = GoogleSheetsClient(api_key)
-            df = client.get_sheet_data(sheet_id, sheet_name, range_name)
+            df = client.get_sheet_data(sheet_id, sheet_name, range_name, max_rows)
             
             print(f"\n=== Spreadsheet Debug Info ===")
             print(f"DataFrame shape: {df.shape}")
@@ -262,7 +270,7 @@ def test_api_connection():
         pytest.skip("Environment variables not set")
     
     client = GoogleSheetsClient(api_key)
-    df = client.get_sheet_data(sheet_id, "Main", "A1:D5")
+    df = client.get_sheet_data(sheet_id, "Main", max_rows=5)
     
     assert isinstance(df, pd.DataFrame), "Should return a DataFrame"
     print(f"API connection test passed: {df.shape}")
@@ -349,7 +357,7 @@ def test_parameter_extraction():
     
     try:
         client = GoogleSheetsClient(api_key)
-        df = client.get_sheet_data(sheet_id, "Main", "A1:AB10")
+        df = client.get_sheet_data(sheet_id, "Main", max_rows=10)
         
         if df.empty:
             pytest.fail("Spreadsheet data is empty")
@@ -379,21 +387,303 @@ def test_parameter_extraction():
         pytest.fail(f"Parameter extraction failed: {e}")
 
 
-if __name__ == "__main__":
-    print("Google Sheets API Test Suite with Spreadsheet Integration")
-    print("=" * 60)
-    
-    # 環境変数確認
+
+
+
+def test_future_value_sheet():
+    """終価シートのテスト"""
     api_key = os.getenv('GOOGLE_SHEETS_API_KEY')
     sheet_id = os.getenv('TEST_SPREADSHEET_ID')
     
-    print(f"API Key: {'Set (' + str(len(api_key)) + ' chars)' if api_key else 'Not set'}")
-    print(f"Sheet ID: {'Set (' + str(len(sheet_id)) + ' chars)' if sheet_id else 'Not set'}")
+    if not api_key or not sheet_id:
+        pytest.skip("Environment variables not set")
+    
+    client = GoogleSheetsClient(api_key)
+    df = client.get_sheet_data(sheet_id, "終価", max_rows=20)
+    
+    assert not df.empty, "終価シートにデータが存在しません"
+    
+    # 既存の列名を使用して数値変換
+    numeric_columns = [
+        'time_period', 'price', 'pre_cash_balance', 'pre_al_unit', 
+        'pre_al_balance', 'pre_al_book_balance', 'pre_unrealized_gl',
+        'cash_inflow_per_unit', 'income_cash_inflow_before_tax', 
+        'income_gain_tax_rate', 'income_gain_tax', 'income_cash_inflow',
+        'unit_outflow', 'capital_cash_inflow_before_tax', 
+        'capital_gain_tax_rate', 'capital_gain_tax', 'capital_cash_inflow',
+        'cash_inflow', 'unit_inflow', 'cash_outflow', 'cash_flow',
+        'unit_flow', 'cash_balance', 'al_unit', 'al_balance',
+        'al_book_balance', 'unrealized_gl', 'rate'
+    ]
+    for col in numeric_columns:
+        if col in df.columns:
+            df[col] = pd.to_numeric(df[col], errors='coerce')
+    
+    print(f"終価シート列: {list(df.columns)}")
+    print(f"終価シートテスト完了: {df.shape}")
+
+
+def test_present_value_sheet():
+    """現価シートのテスト"""
+    api_key = os.getenv('GOOGLE_SHEETS_API_KEY')
+    sheet_id = os.getenv('TEST_SPREADSHEET_ID')
     
     if not api_key or not sheet_id:
-        print("Environment variables not properly set")
-        exit(1)
+        pytest.skip("Environment variables not set")
     
-    # pytest実行
-    import sys
-    sys.exit(pytest.main([__file__, "-v", "-s"]))
+    client = GoogleSheetsClient(api_key)
+    df = client.get_sheet_data(sheet_id, "現価", max_rows=20)
+    
+    assert not df.empty, "現価シートにデータが存在しません"
+    
+    # 既存の列名を使用して数値変換
+    numeric_columns = [
+        'time_period', 'price', 'pre_cash_balance', 'pre_al_unit', 
+        'pre_al_balance', 'pre_al_book_balance', 'pre_unrealized_gl',
+        'cash_inflow_per_unit', 'income_cash_inflow_before_tax', 
+        'income_gain_tax_rate', 'income_gain_tax', 'income_cash_inflow',
+        'unit_outflow', 'capital_cash_inflow_before_tax', 
+        'capital_gain_tax_rate', 'capital_gain_tax', 'capital_cash_inflow',
+        'cash_inflow', 'unit_inflow', 'cash_outflow', 'cash_flow',
+        'unit_flow', 'cash_balance', 'al_unit', 'al_balance',
+        'al_book_balance', 'unrealized_gl', 'rate'
+    ]
+    for col in numeric_columns:
+        if col in df.columns:
+            df[col] = pd.to_numeric(df[col], errors='coerce')
+    
+    print(f"現価シート列: {list(df.columns)}")
+    print(f"現価シートテスト完了: {df.shape}")
+
+
+def test_future_value_annuity_sheet():
+    """年金終価シートのテスト"""
+    api_key = os.getenv('GOOGLE_SHEETS_API_KEY')
+    sheet_id = os.getenv('TEST_SPREADSHEET_ID')
+    
+    if not api_key or not sheet_id:
+        pytest.skip("Environment variables not set")
+    
+    client = GoogleSheetsClient(api_key)
+    df = client.get_sheet_data(sheet_id, "年金終価", max_rows=20)
+    
+    assert not df.empty, "年金終価シートにデータが存在しません"
+    
+    # 既存の列名を使用して数値変換
+    numeric_columns = [
+        'time_period', 'price', 'pre_cash_balance', 'pre_al_unit', 
+        'pre_al_balance', 'pre_al_book_balance', 'pre_unrealized_gl',
+        'cash_inflow_per_unit', 'income_cash_inflow_before_tax', 
+        'income_gain_tax_rate', 'income_gain_tax', 'income_cash_inflow',
+        'unit_outflow', 'capital_cash_inflow_before_tax', 
+        'capital_gain_tax_rate', 'capital_gain_tax', 'capital_cash_inflow',
+        'cash_inflow', 'unit_inflow', 'cash_outflow', 'cash_flow',
+        'unit_flow', 'cash_balance', 'al_unit', 'al_balance',
+        'al_book_balance', 'unrealized_gl', 'rate'
+    ]
+    for col in numeric_columns:
+        if col in df.columns:
+            df[col] = pd.to_numeric(df[col], errors='coerce')
+    
+    print(f"年金終価シート列: {list(df.columns)}")
+    print(f"年金終価シートテスト完了: {df.shape}")
+
+
+def test_sinking_fund_sheet():
+    """減債基金係数シートのテスト"""
+    api_key = os.getenv('GOOGLE_SHEETS_API_KEY')
+    sheet_id = os.getenv('TEST_SPREADSHEET_ID')
+    
+    if not api_key or not sheet_id:
+        pytest.skip("Environment variables not set")
+    
+    client = GoogleSheetsClient(api_key)
+    df = client.get_sheet_data(sheet_id, "減債基金係数", max_rows=20)
+    
+    assert not df.empty, "減債基金係数シートにデータが存在しません"
+    
+    # 既存の列名を使用して数値変換
+    numeric_columns = [
+        'time_period', 'price', 'pre_cash_balance', 'pre_al_unit', 
+        'pre_al_balance', 'pre_al_book_balance', 'pre_unrealized_gl',
+        'cash_inflow_per_unit', 'income_cash_inflow_before_tax', 
+        'income_gain_tax_rate', 'income_gain_tax', 'income_cash_inflow',
+        'unit_outflow', 'capital_cash_inflow_before_tax', 
+        'capital_gain_tax_rate', 'capital_gain_tax', 'capital_cash_inflow',
+        'cash_inflow', 'unit_inflow', 'cash_outflow', 'cash_flow',
+        'unit_flow', 'cash_balance', 'al_unit', 'al_balance',
+        'al_book_balance', 'unrealized_gl', 'rate'
+    ]
+    for col in numeric_columns:
+        if col in df.columns:
+            df[col] = pd.to_numeric(df[col], errors='coerce')
+    
+    print(f"減債基金係数シート列: {list(df.columns)}")
+    print(f"減債基金係数シートテスト完了: {df.shape}")
+
+
+def test_capital_recovery_sheet():
+    """資本回収係数シートのテスト"""
+    api_key = os.getenv('GOOGLE_SHEETS_API_KEY')
+    sheet_id = os.getenv('TEST_SPREADSHEET_ID')
+    
+    if not api_key or not sheet_id:
+        pytest.skip("Environment variables not set")
+    
+    client = GoogleSheetsClient(api_key)
+    df = client.get_sheet_data(sheet_id, "資本回収係数", max_rows=20)
+    
+    assert not df.empty, "資本回収係数シートにデータが存在しません"
+    
+    # 既存の列名を使用して数値変換
+    numeric_columns = [
+        'time_period', 'price', 'pre_cash_balance', 'pre_al_unit', 
+        'pre_al_balance', 'pre_al_book_balance', 'pre_unrealized_gl',
+        'cash_inflow_per_unit', 'income_cash_inflow_before_tax', 
+        'income_gain_tax_rate', 'income_gain_tax', 'income_cash_inflow',
+        'unit_outflow', 'capital_cash_inflow_before_tax', 
+        'capital_gain_tax_rate', 'capital_gain_tax', 'capital_cash_inflow',
+        'cash_inflow', 'unit_inflow', 'cash_outflow', 'cash_flow',
+        'unit_flow', 'cash_balance', 'al_unit', 'al_balance',
+        'al_book_balance', 'unrealized_gl', 'rate'
+    ]
+    for col in numeric_columns:
+        if col in df.columns:
+            df[col] = pd.to_numeric(df[col], errors='coerce')
+    
+    print(f"資本回収係数シート列: {list(df.columns)}")
+    print(f"資本回収係数シートテスト完了: {df.shape}")
+
+
+def test_present_value_annuity_sheet():
+    """年金現価シートのテスト"""
+    api_key = os.getenv('GOOGLE_SHEETS_API_KEY')
+    sheet_id = os.getenv('TEST_SPREADSHEET_ID')
+    
+    if not api_key or not sheet_id:
+        pytest.skip("Environment variables not set")
+    
+    client = GoogleSheetsClient(api_key)
+    df = client.get_sheet_data(sheet_id, "年金現価", max_rows=20)
+    
+    assert not df.empty, "年金現価シートにデータが存在しません"
+    
+    # 既存の列名を使用して数値変換
+    numeric_columns = [
+        'time_period', 'price', 'pre_cash_balance', 'pre_al_unit', 
+        'pre_al_balance', 'pre_al_book_balance', 'pre_unrealized_gl',
+        'cash_inflow_per_unit', 'income_cash_inflow_before_tax', 
+        'income_gain_tax_rate', 'income_gain_tax', 'income_cash_inflow',
+        'unit_outflow', 'capital_cash_inflow_before_tax', 
+        'capital_gain_tax_rate', 'capital_gain_tax', 'capital_cash_inflow',
+        'cash_inflow', 'unit_inflow', 'cash_outflow', 'cash_flow',
+        'unit_flow', 'cash_balance', 'al_unit', 'al_balance',
+        'al_book_balance', 'unrealized_gl', 'rate'
+    ]
+    for col in numeric_columns:
+        if col in df.columns:
+            df[col] = pd.to_numeric(df[col], errors='coerce')
+    
+    print(f"年金現価シート列: {list(df.columns)}")
+    print(f"年金現価シートテスト完了: {df.shape}")
+
+
+def test_coupon_bond_sheet():
+    """利付債シートのテスト"""
+    api_key = os.getenv('GOOGLE_SHEETS_API_KEY')
+    sheet_id = os.getenv('TEST_SPREADSHEET_ID')
+    
+    if not api_key or not sheet_id:
+        pytest.skip("Environment variables not set")
+    
+    client = GoogleSheetsClient(api_key)
+    df = client.get_sheet_data(sheet_id, "利付債", max_rows=20)
+    
+    assert not df.empty, "利付債シートにデータが存在しません"
+    
+    # 既存の列名を使用して数値変換
+    numeric_columns = [
+        'time_period', 'price', 'pre_cash_balance', 'pre_al_unit', 
+        'pre_al_balance', 'pre_al_book_balance', 'pre_unrealized_gl',
+        'cash_inflow_per_unit', 'income_cash_inflow_before_tax', 
+        'income_gain_tax_rate', 'income_gain_tax', 'income_cash_inflow',
+        'unit_outflow', 'capital_cash_inflow_before_tax', 
+        'capital_gain_tax_rate', 'capital_gain_tax', 'capital_cash_inflow',
+        'cash_inflow', 'unit_inflow', 'cash_outflow', 'cash_flow',
+        'unit_flow', 'cash_balance', 'al_unit', 'al_balance',
+        'al_book_balance', 'unrealized_gl', 'rate'
+    ]
+    for col in numeric_columns:
+        if col in df.columns:
+            df[col] = pd.to_numeric(df[col], errors='coerce')
+    
+    print(f"利付債シート列: {list(df.columns)}")
+    print(f"利付債シートテスト完了: {df.shape}")
+
+
+def test_equal_principal_repayment_sheet():
+    """元金均等返済シートのテスト"""
+    api_key = os.getenv('GOOGLE_SHEETS_API_KEY')
+    sheet_id = os.getenv('TEST_SPREADSHEET_ID')
+    
+    if not api_key or not sheet_id:
+        pytest.skip("Environment variables not set")
+    
+    client = GoogleSheetsClient(api_key)
+    df = client.get_sheet_data(sheet_id, "元金均等返済", max_rows=50)
+    
+    assert not df.empty, "元金均等返済シートにデータが存在しません"
+    
+    # 既存の列名を使用して数値変換
+    numeric_columns = [
+        'time_period', 'price', 'pre_cash_balance', 'pre_al_unit', 
+        'pre_al_balance', 'pre_al_book_balance', 'pre_unrealized_gl',
+        'cash_inflow_per_unit', 'income_cash_inflow_before_tax', 
+        'income_gain_tax_rate', 'income_gain_tax', 'income_cash_inflow',
+        'unit_outflow', 'capital_cash_inflow_before_tax', 
+        'capital_gain_tax_rate', 'capital_gain_tax', 'capital_cash_inflow',
+        'cash_inflow', 'unit_inflow', 'cash_outflow', 'cash_flow',
+        'unit_flow', 'cash_balance', 'al_unit', 'al_balance',
+        'al_book_balance', 'unrealized_gl', 'rate'
+    ]
+    for col in numeric_columns:
+        if col in df.columns:
+            df[col] = pd.to_numeric(df[col], errors='coerce')
+    
+    print(f"元金均等返済シート列: {list(df.columns)}")
+    print(f"元金均等返済シートテスト完了: {df.shape}")
+
+
+def test_equal_payment_repayment_sheet():
+    """元利均等返済シートのテスト"""
+    api_key = os.getenv('GOOGLE_SHEETS_API_KEY')
+    sheet_id = os.getenv('TEST_SPREADSHEET_ID')
+    
+    if not api_key or not sheet_id:
+        pytest.skip("Environment variables not set")
+    
+    client = GoogleSheetsClient(api_key)
+    df = client.get_sheet_data(sheet_id, "元利均等返済", max_rows=50)
+    
+    assert not df.empty, "元利均等返済シートにデータが存在しません"
+    
+    # 既存の列名を使用して数値変換
+    numeric_columns = [
+        'time_period', 'price', 'pre_cash_balance', 'pre_al_unit', 
+        'pre_al_balance', 'pre_al_book_balance', 'pre_unrealized_gl',
+        'cash_inflow_per_unit', 'income_cash_inflow_before_tax', 
+        'income_gain_tax_rate', 'income_gain_tax', 'income_cash_inflow',
+        'unit_outflow', 'capital_cash_inflow_before_tax', 
+        'capital_gain_tax_rate', 'capital_gain_tax', 'capital_cash_inflow',
+        'cash_inflow', 'unit_inflow', 'cash_outflow', 'cash_flow',
+        'unit_flow', 'cash_balance', 'al_unit', 'al_balance',
+        'al_book_balance', 'unrealized_gl', 'rate'
+    ]
+    for col in numeric_columns:
+        if col in df.columns:
+            df[col] = pd.to_numeric(df[col], errors='coerce')
+    
+    print(f"元利均等返済シート列: {list(df.columns)}")
+    print(f"元利均等返済シートテスト完了: {df.shape}")
+
+
