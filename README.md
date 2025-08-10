@@ -1,4 +1,4 @@
-# FPy - Financial Planning in Python (Based on the Japanese System)
+# FPy-JP - Financial Planning in Python (Based on the Japanese System)
 
 A comprehensive Python package for financial planning and analysis, providing tools for cash flow modeling, asset/liability management and financial simulations, based on the Japanese system.
 
