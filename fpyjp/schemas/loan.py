@@ -47,13 +47,13 @@ class Loan(BaseModel):
         Name of the loan product
     interest_rate : Union[float, List[float]]
         Interest rate(s) as decimal (e.g., 0.025 for 2.5%)
-    contract_date : datetime.date
+    contract_date : Optional[datetime.date]
         Date when the loan contract was signed
-    principal : float
+    principal : Optional[float]
         Original loan amount (元本)
-    total_term_months : int
+    total_term_months : Optional[int]
         Total loan term in months
-    remaining_term_months : int
+    remaining_term_months : Optional[int]
         Remaining loan term in months
     payment_frequency : int
         Payment frequency in months (1=monthly, 3=quarterly, 6=semi-annually, 12=annually)
@@ -129,8 +129,8 @@ class Loan(BaseModel):
         description="Type of interest rate"
     )
     
-    remaining_balance: Optional[float] = Field(
-        default=None,
+    remaining_balance: float = Field(
+        ...,
         ge=0,
         description="Current remaining balance of the loan"
     )
@@ -275,8 +275,10 @@ class Loan(BaseModel):
                 raise ValueError("Variable interest rate type requires list of rates")
         elif self.interest_rate_type == InterestRateType.FIXED:
             if isinstance(self.interest_rate, list):
-                raise ValueError("Fixed interest rate type requires single rate value")
-        
+                # リスト内のすべての値が同じかチェック
+                if len(set(self.interest_rate)) > 1:
+                    raise ValueError("Fixed interest rate type requires all rates to be identical")
+            
         # Set default remaining balance to principal if not provided
         if self.remaining_balance is None:
             self.remaining_balance = self.principal
@@ -305,90 +307,3 @@ class Loan(BaseModel):
             return self.interest_rate[0]
         return self.interest_rate
     
-    def get_annual_payment_count(self) -> int:
-        """
-        Get number of payments per year based on payment frequency.
-        
-        Returns
-        -------
-        int
-            Number of payments per year
-        """
-        return 12 // self.payment_frequency
-    
-    def calculate_total_payments(self) -> Optional[int]:
-        """
-        Calculate total number of payments over the total loan term.
-        
-        Returns
-        -------
-        Optional[int]
-            Total number of payments, or None if total_term_months is not set
-        """
-        if self.total_term_months is None:
-            return None
-        return self.total_term_months // self.payment_frequency
-    
-    def calculate_remaining_payments(self) -> Optional[int]:
-        """
-        Calculate remaining number of payments.
-        
-        Returns
-        -------
-        Optional[int]
-            Remaining number of payments, or None if remaining_term_months is not set
-        """
-        if self.remaining_term_months is None:
-            return None
-        return self.remaining_term_months // self.payment_frequency
-    
-    def calculate_payments_made(self) -> Optional[int]:
-        """
-        Calculate number of payments already made.
-        
-        Returns
-        -------
-        Optional[int]
-            Number of payments made, or None if either total or remaining term is not set
-        """
-        total_payments = self.calculate_total_payments()
-        remaining_payments = self.calculate_remaining_payments()
-        
-        if total_payments is None or remaining_payments is None:
-            return None
-            
-        return total_payments - remaining_payments
-    
-    class Config:
-        """Pydantic configuration."""
-        json_encoders = {
-            datetime.date: lambda v: v.isoformat()
-        }
-        json_schema_extra = {
-            "examples": [
-                {
-                    "name": "フラット35",
-                    "interest_rate": 0.013,
-                    "contract_date": "2024-01-15",
-                    "principal": 35000000,
-                    "total_term_months": 360,
-                    "remaining_term_months": 300,
-                    "payment_frequency": 1,
-                    "repayment_method": "equal_principal",
-                    "interest_rate_type": "fixed",
-                    "remaining_balance": 28000000
-                },
-                {
-                    "name": "JASSO奨学金",
-                    "interest_rate": 0.000,
-                    "contract_date": "2023-04-01",
-                    "principal": 2400000,
-                    "total_term_months": 240,
-                    "remaining_term_months": 180,
-                    "payment_frequency": 1,
-                    "repayment_method": "equal_principal",
-                    "interest_rate_type": "fixed",
-                    "remaining_balance": 1800000
-                }
-            ]
-        }
