@@ -14,8 +14,9 @@ Defines data models for loan using Pydantic V2.
 
 import datetime
 import math
-from typing import List, Optional, Union
 from enum import Enum
+from typing import List, Optional, Union
+
 import numpy as np
 from pydantic import BaseModel, Field, field_validator, model_validator, computed_field
 
@@ -63,10 +64,18 @@ class Loan(BaseModel):
         Type of interest rate (fixed or variable)
     remaining_balance : Optional[float]
         Current remaining balance of the loan
+    repayment_amount : Optional[float]
+        Regular payment amount per payment period
+    final_repayment_amount : Optional[float]
+        Final payment amount (for fixed rate loans only)
     total_term_years : int
         Total loan term in years (computed from total_term_months, rounded up)
     remaining_term_years : int
         Remaining loan term in years (computed from remaining_term_months, rounded up)
+    payment_count : int
+        Number of remaining payments (computed for fixed rate loans)
+    final_repayment_amount : float
+        Final payment amount for fixed rate loans (computed attribute)
     """
     
     name: str = Field(
@@ -95,6 +104,12 @@ class Loan(BaseModel):
         examples=[35000000, 2400000]
     )
     
+    remaining_balance: float = Field(
+        ...,
+        ge=0,
+        description="Current remaining balance of the loan"
+    )
+
     total_term_months: Optional[int] = Field(
         None,
         gt=0,
@@ -111,14 +126,6 @@ class Loan(BaseModel):
         examples=[300, 180, 60]  # 25年, 15年, 5年
     )
     
-    payment_frequency: int = Field(
-        default=1,
-        gt=0,
-        le=12,
-        description="Payment frequency in months (1=monthly, 3=quarterly, 6=semi-annually, 12=annually)",
-        examples=[1, 3, 6, 12]
-    )
-    
     repayment_method: RepaymentMethod = Field(
         default=RepaymentMethod.EQUAL_PRINCIPAL,  # 元金均等をデフォルトに
         description="Method of loan repayment"
@@ -128,12 +135,21 @@ class Loan(BaseModel):
         default=InterestRateType.FIXED,
         description="Type of interest rate"
     )
-    
-    remaining_balance: float = Field(
-        ...,
-        ge=0,
-        description="Current remaining balance of the loan"
+
+    payment_frequency: int = Field(
+        default=1,
+        gt=0,
+        le=12,
+        description="Payment frequency in months (1=monthly, 3=quarterly, 6=semi-annually, 12=annually)",
+        examples=[1, 3, 6, 12]
     )
+    
+    repayment_amount: Optional[float] = Field(
+        None,
+        gt=0,
+        description="Regular payment amount per payment period (1回あたり返済額)"
+    )
+    
     
     @computed_field
     @property
@@ -164,6 +180,46 @@ class Loan(BaseModel):
         if self.remaining_term_months is None:
             return None
         return math.ceil(self.remaining_term_months / 12)
+    
+    @computed_field
+    @property
+    def payment_count(self) -> Optional[int]:
+        """
+        Number of remaining payments (computed for fixed rate loans).
+        Formula: math.ceil(remaining_term_months / payment_frequency)
+        
+        Returns
+        -------
+        Optional[int]
+            Number of remaining payments, or None if remaining_term_months is not set
+        """
+        if self.remaining_term_months is None:
+            return None
+        return math.ceil(self.remaining_term_months / self.payment_frequency)
+    
+    @computed_field
+    @property
+    def final_repayment_amount(self) -> Optional[float]:
+        """
+        Final payment amount for fixed rate loans (computed attribute).
+        Calculated using the formula:
+        final_repayment_amount = remaining_balance - repayment_amount × (payment_count - 1)
+        
+        Returns
+        -------
+        Optional[float]
+            Final payment amount, or None if required fields are not available
+            
+        Notes
+        -----
+        Only applicable for fixed rate loans with repayment_amount and required fields present.
+        """
+        if (self.interest_rate_type != InterestRateType.FIXED or 
+            self.repayment_amount is None or
+            self.remaining_term_months is None):
+            return None
+        
+        return self.remaining_balance - self.repayment_amount * (self.payment_count - 1)
     
     @field_validator('interest_rate')
     @classmethod
@@ -267,7 +323,8 @@ class Loan(BaseModel):
         ------
         ValueError
             If variable rate type has single interest rate value or
-            if fixed rate type has multiple interest rate values
+            if fixed rate type has multiple interest rate values or
+            if payment amount consistency check fails for fixed rate loans
         """
         # Validate interest rate type consistency
         if self.interest_rate_type == InterestRateType.VARIABLE:
@@ -278,7 +335,7 @@ class Loan(BaseModel):
                 # リスト内のすべての値が同じかチェック
                 if len(set(self.interest_rate)) > 1:
                     raise ValueError("Fixed interest rate type requires all rates to be identical")
-            
+        
         # Set default remaining balance to principal if not provided
         if self.remaining_balance is None:
             self.remaining_balance = self.principal
@@ -286,6 +343,26 @@ class Loan(BaseModel):
         # Set default remaining term to total term if not provided
         if self.remaining_term_months is None:
             self.remaining_term_months = self.total_term_months
+        
+        # Validate payment amount consistency for fixed rate loans
+        if (self.interest_rate_type == InterestRateType.FIXED and 
+            self.repayment_amount is not None and 
+            self.remaining_term_months is not None):
+            
+            # The final_repayment_amount is computed, so we validate the overall consistency
+            expected_remaining_balance = (
+                self.repayment_amount * (self.payment_count - 1) + self.final_repayment_amount
+            )
+            
+            # Allow for small floating point differences
+            tolerance = 0.01
+            if abs(self.remaining_balance - expected_remaining_balance) > tolerance:
+                raise ValueError(
+                    f"Payment amount consistency check failed. "
+                    f"Expected remaining balance: {expected_remaining_balance:.2f}, "
+                    f"Actual: {self.remaining_balance:.2f}. "
+                    f"Formula: remaining_balance = repayment_amount × (payment_count - 1) + final_repayment_amount"
+                )
             
         return self
     
@@ -307,3 +384,28 @@ class Loan(BaseModel):
             return self.interest_rate[0]
         return self.interest_rate
     
+    def validate_payment_formula(self) -> bool:
+        """
+        Validate the payment formula for fixed rate loans.
+        Formula: remaining_balance = repayment_amount × (payment_count - 1) + final_repayment_amount
+        
+        Returns
+        -------
+        bool
+            True if formula is satisfied (within tolerance), False otherwise
+            
+        Notes
+        -----
+        Only applicable for fixed rate loans with all required fields present.
+        """
+        if (self.interest_rate_type != InterestRateType.FIXED or 
+            self.repayment_amount is None or
+            self.remaining_term_months is None):
+            return False
+        
+        expected_remaining_balance = (
+            self.repayment_amount * (self.payment_count - 1) + self.final_repayment_amount
+        )
+        
+        tolerance = 0.01
+        return abs(self.remaining_balance - expected_remaining_balance) <= tolerance
