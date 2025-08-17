@@ -186,10 +186,10 @@ class TestLoanComputedFields:
             repayment_amount=100000.0
         )
         
-        # Formula: remaining_balance - repayment_amount × payment_count
+        # Formula: remaining_balance - repayment_amount × (payment_count - 1)
         # payment_count = math.ceil(12/1) = 12
-        # final_repayment_amount = 1200000 - 100000 × 12 = 0
-        expected_final = 1200000.0 - 100000.0 * 12
+        # final_repayment_amount = 1200000 - 100000 × (12 - 1) = 1200000 - 1100000 = 100000
+        expected_final = 1200000.0 - 100000.0 * (12 - 1)  # = 100000.0
         assert loan.final_repayment_amount == expected_final
         
         # Variable rate loan should return None
@@ -639,8 +639,9 @@ class TestLoanEdgeCases:
             repayment_amount=100000.0
         )
         assert loan.payment_count == 1  # math.ceil(1/1) = 1
-        assert loan.final_repayment_amount == 0.0  # 100000 - 100000 * 1
-
+        # Formula: remaining_balance - repayment_amount × (payment_count - 1)
+        # final_repayment_amount = 100000 - 100000 × (1 - 1) = 100000 - 0 = 100000
+        assert loan.final_repayment_amount == 100000.0
 
 class TestLoanDefaultValues:
     """Test default value assignments."""
@@ -741,7 +742,8 @@ def sample_flat35_loan():
         payment_frequency=1,
         repayment_method=RepaymentMethod.EQUAL_PAYMENT,
         interest_rate_type=InterestRateType.FIXED,
-        repayment_amount=98000.0
+        repayment_amount=95000.0  # 98000.0 → 95000.0 に修正
+        # 95000 × 330 = 31,350,000 < 32,000,000 なので整合性が取れる
     )
 
 

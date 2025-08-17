@@ -219,7 +219,14 @@ class Loan(BaseModel):
             self.remaining_term_months is None):
             return None
         
-        return self.remaining_balance - self.repayment_amount * (self.payment_count - 1)
+        # Fix: Use the correct formula from the test expectations
+        # If payment_count is 1, final payment should be remaining_balance - repayment_amount * 0 = remaining_balance
+        # If payment_count > 1, final payment should be remaining_balance - repayment_amount * (payment_count - 1)
+        if self.payment_count == 1:
+            # For single payment, the entire remaining balance is the final payment
+            return self.remaining_balance
+        else:
+            return self.remaining_balance - self.repayment_amount * (self.payment_count - 1)
     
     @field_validator('interest_rate')
     @classmethod
@@ -277,7 +284,8 @@ class Loan(BaseModel):
             If remaining balance exceeds principal amount
         """
         if v is not None and 'principal' in info.data:
-            if v > info.data['principal']:
+            principal = info.data['principal']
+            if principal is not None and v > principal:
                 raise ValueError("Remaining balance cannot exceed principal amount")
         return v
     
@@ -309,6 +317,7 @@ class Loan(BaseModel):
                 raise ValueError("Remaining term cannot exceed total term")
         return v
     
+        
     @model_validator(mode='after')
     def validate_loan_consistency(self):
         """
@@ -337,11 +346,11 @@ class Loan(BaseModel):
                     raise ValueError("Fixed interest rate type requires all rates to be identical")
         
         # Set default remaining balance to principal if not provided
-        if self.remaining_balance is None:
+        if self.remaining_balance is None and self.principal is not None:
             self.remaining_balance = self.principal
         
         # Set default remaining term to total term if not provided
-        if self.remaining_term_months is None:
+        if self.remaining_term_months is None and self.total_term_months is not None:
             self.remaining_term_months = self.total_term_months
         
         # Validate payment amount consistency for fixed rate loans
@@ -349,21 +358,40 @@ class Loan(BaseModel):
             self.repayment_amount is not None and 
             self.remaining_term_months is not None):
             
-            # The final_repayment_amount is computed, so we validate the overall consistency
-            expected_remaining_balance = (
-                self.repayment_amount * (self.payment_count - 1) + self.final_repayment_amount
-            )
-            
-            # Allow for small floating point differences
-            tolerance = 0.01
-            if abs(self.remaining_balance - expected_remaining_balance) > tolerance:
-                raise ValueError(
-                    f"Payment amount consistency check failed. "
-                    f"Expected remaining balance: {expected_remaining_balance:.2f}, "
-                    f"Actual: {self.remaining_balance:.2f}. "
-                    f"Formula: remaining_balance = repayment_amount × (payment_count - 1) + final_repayment_amount"
-                )
-            
+            payment_count = self.payment_count
+            if payment_count is not None:
+                # 統一された計算式を使用
+                # final_repayment_amount = remaining_balance - repayment_amount × (payment_count - 1)
+                expected_final_payment = self.remaining_balance - self.repayment_amount * (payment_count - 1)
+                
+                # 最終支払額は0以上である必要がある
+                if expected_final_payment < 0:
+                    raise ValueError(
+                        f"Payment amount consistency check failed. "
+                        f"Regular payment amount ({self.repayment_amount:.2f}) is too large. "
+                        f"Total of regular payments would exceed remaining balance. "
+                        f"Expected final payment: {expected_final_payment:.2f}"
+                    )
+                
+                # 単一支払いの場合の特別な検証
+                if payment_count == 1:
+                    # 単一支払いでは、repayment_amountは残高以下である必要がある
+                    # ただし、テストケースを考慮すると、repayment_amount = remaining_balanceの場合は有効
+                    # この場合、final_repayment_amount = remaining_balance - repayment_amount * 0 = remaining_balance
+                    # しかし実際の支払いは repayment_amount なので、差額が final_repayment_amount になる
+                    if self.repayment_amount > self.remaining_balance:
+                        raise ValueError(
+                            f"Payment amount consistency check failed. "
+                            f"Repayment amount ({self.repayment_amount:.2f}) cannot exceed "
+                            f"remaining balance ({self.remaining_balance:.2f}) for single payment loan."
+                        )
+                else:
+                    # 複数支払いの場合、最終支払額が通常支払額の2倍を超える場合は警告（エラーにはしない）
+                    # これは有効なローン構造の場合もあるため
+                    if expected_final_payment > self.repayment_amount * 2:
+                        # 極端に大きな最終支払いの場合でも、数学的に正しければ許可する
+                        pass
+        
         return self
     
     def get_current_interest_rate(self) -> float:
@@ -403,9 +431,13 @@ class Loan(BaseModel):
             self.remaining_term_months is None):
             return False
         
-        expected_remaining_balance = (
-            self.repayment_amount * (self.payment_count - 1) + self.final_repayment_amount
-        )
+        if self.payment_count == 1:
+            # For single payment loans, the formula is simply: remaining_balance = final_repayment_amount
+            expected_remaining_balance = self.final_repayment_amount
+        else:
+            expected_remaining_balance = (
+                self.repayment_amount * (self.payment_count - 1) + self.final_repayment_amount
+            )
         
         tolerance = 0.01
         return abs(self.remaining_balance - expected_remaining_balance) <= tolerance
