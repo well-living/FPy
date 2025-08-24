@@ -57,6 +57,8 @@ class AssetLiabilitySimulator:
         Cash inflow per unit for each period (extracted from al_schema)
     rate : List[float]
         Price growth rate for each period (extracted from al_schema)
+    allow_negative_unit : bool
+        Whether to allow negative unit values (for short positions)
     """
     
     def __init__(
@@ -72,6 +74,7 @@ class AssetLiabilitySimulator:
             cash_outflow: Union[float, List[float]] = 0,
             income_gain_tax_rate: Union[float, List[float]] = TAX_RATE,
             capital_gain_tax_rate: Union[float, List[float]] = TAX_RATE,
+            allow_negative_unit: bool = False
         ):
         """
         Initialize the simulator with initial values and parameters.
@@ -101,6 +104,9 @@ class AssetLiabilitySimulator:
             Tax rate for income gains
         capital_gain_tax_rate : Union[float, List[float]], default TAX_RATE(0.20315)
             Tax rate for capital gains
+        allow_negative_unit : bool, default False
+            Whether to allow negative unit values (for short positions).
+            Used when al_schema is not provided.
             
         Raises
         ------
@@ -117,6 +123,8 @@ class AssetLiabilitySimulator:
         if al_schema is not None:
             # Use provided al_schema
             self.al_schema = al_schema
+            # Extract allow_negative_unit from al_schema
+            self.allow_negative_unit = al_schema.allow_negative_unit
         else:
             # Create al_schema from individual parameters
             if initial_price is None:
@@ -127,15 +135,18 @@ class AssetLiabilitySimulator:
             # Calculate unit from price and balance
             unit = safe_divide(initial_al_balance, initial_price, 0.0)
             
+            # Store allow_negative_unit flag
+            self.allow_negative_unit = allow_negative_unit
+            
             self.al_schema = AssetLiabilitySchema(
                 price=initial_price,
                 unit=unit,
                 balance=initial_al_balance,
                 book_balance=initial_al_book_balance or initial_al_balance,
                 cashinflow_per_unit=cash_inflow_per_unit,
-                rate=rate or 0.0
+                rate=rate or 0.0,
+                allow_negative_unit=allow_negative_unit
             )
-
 
     
     def _extract_schema_values(self):
@@ -188,14 +199,17 @@ class AssetLiabilitySimulator:
                 Asset/liability units at the beginning of the period.
                 For period 0: Calculated as pre_al_balance / price
                 For period 1 onwards: Carried forward from previous period's al_unit
+                Can be negative if short positions are allowed.
                 
             pre_al_balance : float
                 Asset/liability balance at the beginning of the period.
                 Calculated as: price * pre_al_unit
+                Can be negative for short positions.
                 
             pre_al_book_balance : float
                 Book balance of asset/liability at the beginning of the period.
                 Carried forward from previous period's al_book_balance.
+                Can be negative for short positions.
                 
             pre_unrealized_gl : float
                 Unrealized gain/loss at the beginning of the period.
@@ -203,10 +217,12 @@ class AssetLiabilitySimulator:
                 
             cash_inflow_per_unit : float
                 Specified cash inflow per unit for the period (input parameter).
+                For short positions, this may represent cash outflow.
                 
             income_cash_inflow_before_tax : float
                 Total income cash inflow before tax.
                 Calculated as: pre_al_unit * cash_inflow_per_unit
+                Can be negative for short positions.
                 
             income_gain_tax_rate : float
                 Tax rate applied to income gains (input parameter).
@@ -214,6 +230,7 @@ class AssetLiabilitySimulator:
             income_gain_tax : float
                 Tax on income gains.
                 Calculated as: max(income_cash_inflow_before_tax * income_gain_tax_rate, 0)
+                Only positive income is taxed.
                 
             income_cash_inflow : float
                 Net income cash inflow after tax.
@@ -222,6 +239,7 @@ class AssetLiabilitySimulator:
             unit_outflow : float
                 Units sold/disposed during the period.
                 Calculated as: capital_cash_inflow_before_tax / price
+                For short positions, negative outflow means covering short positions.
                 
             capital_cash_inflow_before_tax : float
                 Capital cash inflow before tax (input parameter).
@@ -231,7 +249,9 @@ class AssetLiabilitySimulator:
                 
             capital_gain_tax : float
                 Tax on capital gains on the gain portion only.
-                Calculated as: max(0, (price - avg_book_price) * unit_outflow) * capital_gain_tax_rate
+                Calculated differently for long and short positions:
+                - Long: max(0, (price - avg_book_price) * unit_outflow) * tax_rate
+                - Short: max(0, (avg_book_price - price) * abs(unit_outflow)) * tax_rate
                 
             capital_cash_inflow : float
                 Net capital cash inflow after tax.
@@ -244,6 +264,7 @@ class AssetLiabilitySimulator:
             unit_inflow : float
                 Units purchased during the period.
                 Calculated as: cash_outflow / price
+                For short positions, this represents short selling.
                 
             cash_outflow : float
                 Specified cash outflow for the period (input parameter).
@@ -263,15 +284,17 @@ class AssetLiabilitySimulator:
             al_unit : float
                 Asset/liability units at the end of the period.
                 Calculated as: pre_al_unit + unit_flow
+                Can be negative for short positions.
                 
             al_balance : float
                 Asset/liability balance at the end of the period.
                 Calculated as: al_unit * price
+                Can be negative for short positions.
                 
             al_book_balance : float
                 Book balance at the end of the period.
-                Calculated as: 
-                    pre_al_book_balance * (1 - unit_outflow/pre_al_unit if pre_al_unit > 0 else 1) + cash_outflow
+                For long positions: pre_al_book_balance * (1 - unit_outflow/pre_al_unit if pre_al_unit > 0) + cash_outflow
+                For short positions: Similar logic but handles negative units appropriately.
                 
             unrealized_gl : float
                 Unrealized gain/loss at the end of the period.
@@ -286,6 +309,10 @@ class AssetLiabilitySimulator:
         - Units are sold first (unit_outflow), then purchased (unit_inflow)
         - Book balance is adjusted proportionally when units are sold
         - Capital gains tax is only applied to the gain portion of realized gains
+        - For short positions:
+          - Negative units represent short positions
+          - Income flows may be negative (e.g., dividend payments on short positions)
+          - Capital gains are calculated as (avg_book_price - current_price) for shorts
         - All cash flows are processed sequentially within each period
         """
         # Extract values from al_schema
@@ -321,8 +348,6 @@ class AssetLiabilitySimulator:
         current_al_unit = self.initial_al_unit
         current_al_balance = self.initial_al_balance
         current_al_book_balance = self.initial_al_book_balance
-
-        print("self.cash_inflow_per_unit",self.cash_inflow_per_unit)
         
         for period in range(n_periods):
             # Get period-specific values using utility function
@@ -344,10 +369,12 @@ class AssetLiabilitySimulator:
             df.loc[period, 'rate'] = rate
             
             # Income gain (or loss) calculations
+            # For short positions, this may be negative (e.g., dividend payments)
             income_cash_inflow_before_tax = current_al_unit * cash_inflow_per_unit
             df.loc[period, 'income_cash_inflow_before_tax'] = income_cash_inflow_before_tax
             df.loc[period, 'income_gain_tax_rate'] = income_gain_tax_rate
             
+            # Only tax positive income gains
             income_gain_tax = max(income_cash_inflow_before_tax * income_gain_tax_rate, 0)
             df.loc[period, 'income_gain_tax'] = income_gain_tax
             
@@ -358,22 +385,31 @@ class AssetLiabilitySimulator:
             unit_outflow = safe_divide(capital_cash_inflow_before_tax, current_price, 0.0)
             df.loc[period, 'unit_outflow'] = unit_outflow
             
-            # Capital calculations - FIXED CAPITAL GAINS TAX CALCULATION
+            # Capital calculations - ENHANCED FOR SHORT POSITIONS
             df.loc[period, 'capital_cash_inflow_before_tax'] = capital_cash_inflow_before_tax
             df.loc[period, 'capital_gain_tax_rate'] = capital_gain_tax_rate
             
-            # Capital gain tax - only on the gain portion of sold units
-            if unit_outflow > 0 and current_al_unit > 0:
+            # Capital gain tax calculation - handles both long and short positions
+            capital_gain_tax = 0.0
+            if unit_outflow != 0 and current_al_unit != 0:
                 # Calculate average book price per unit using utility function
                 avg_book_price = safe_divide(current_al_book_balance, current_al_unit, current_price)
-                # Calculate realized gain per unit (only positive gains are taxable)
-                gain_per_unit = max(0, current_price - avg_book_price)
-                # Calculate total realized gain
-                total_realized_gain = gain_per_unit * unit_outflow
+                
+                if current_al_unit > 0:  # Long position
+                    # For long positions: gain = (current_price - avg_book_price) * units_sold
+                    gain_per_unit = max(0, current_price - avg_book_price)
+                    total_realized_gain = gain_per_unit * unit_outflow
+                elif current_al_unit < 0:  # Short position
+                    # For short positions: gain = (avg_book_price - current_price) * abs(units_covered)
+                    # Note: unit_outflow for covering shorts should be negative
+                    if unit_outflow < 0:  # Covering short position
+                        gain_per_unit = max(0, avg_book_price - current_price)
+                        total_realized_gain = gain_per_unit * abs(unit_outflow)
+                    else:  # Adding to short position (rare case with positive unit_outflow on short)
+                        total_realized_gain = 0.0
+                
                 # Apply tax to realized gain only
                 capital_gain_tax = total_realized_gain * capital_gain_tax_rate
-            else:
-                capital_gain_tax = 0.0
                 
             df.loc[period, 'capital_gain_tax'] = capital_gain_tax
             
@@ -404,11 +440,12 @@ class AssetLiabilitySimulator:
             new_al_balance = new_al_unit * current_price
             df.loc[period, 'al_balance'] = new_al_balance
             
-            # Book balance adjustment - WITH ZERO DIVISION PROTECTION
+            # Book balance adjustment - ENHANCED FOR SHORT POSITIONS
             if current_al_unit == 0:
                 book_balance_adjustment_rate = 0  # No units to adjust
                 new_al_book_balance = cash_outflow  # All outflow becomes new book balance
             else:
+                # For both long and short positions, the adjustment rate is the same
                 book_balance_adjustment_rate = safe_divide(unit_outflow, current_al_unit, 0.0)
                 new_al_book_balance = (current_al_book_balance - 
                                        current_al_book_balance * book_balance_adjustment_rate + 
@@ -426,4 +463,155 @@ class AssetLiabilitySimulator:
             current_al_balance = new_al_balance * (1 + rate)
             current_al_book_balance = new_al_book_balance
             
+        # Store the simulation result
+        self.simulation_dataframe = df.copy()
+        
         return df
+    
+
+
+    def calculate_grouped(
+        self,
+        group_periods: int = 12,
+        first_group_periods: Optional[int] = None,
+        rate_aggregation: str = "last"
+    ) -> pd.DataFrame:
+        """
+        Calculate grouped simulation results by aggregating periods.
+        
+        Parameters
+        ----------
+        group_periods : int, default 12
+            Number of periods to group together for regular groups
+        first_group_periods : Optional[int], default None
+            Number of periods for the first group. If None, uses group_periods
+        rate_aggregation : Literal["first", "last", "mean"], default "last"
+            How to aggregate rate-type columns ('price', 'rate', 'income_gain_tax_rate', 'capital_gain_tax_rate'):
+            - "first": Use the first value in each group (period beginning)
+            - "last": Use the last value in each group (period end)  
+            - "mean": Use the mean value across the group (period average)
+            
+        Returns
+        -------
+        pd.DataFrame
+            DataFrame with grouped results containing the same columns as simulation_dataframe.
+            Flow items are summed, beginning-of-period stock items use first values,
+            end-of-period stock items use last values, and rate items are aggregated 
+            according to rate_aggregation parameter.
+            
+        Raises
+        ------
+        ValueError
+            If simulation_dataframe is None (simulate() must be called first)
+            If group_periods <= 0
+            If first_group_periods is not None and <= 0
+            If rate_aggregation is not one of the valid options
+        """
+        if self.simulation_dataframe is None:
+            raise ValueError("simulation_dataframe is None. Call simulate() first.")
+        
+        if group_periods <= 0:
+            raise ValueError("group_periods must be positive")
+            
+        if first_group_periods is not None and first_group_periods <= 0:
+            raise ValueError("first_group_periods must be positive if provided")
+            
+        if rate_aggregation not in ["first", "last", "mean"]:
+            raise ValueError("rate_aggregation must be one of: 'first', 'last', 'mean'")
+        
+        # Use group_periods for first group if not specified
+        if first_group_periods is None:
+            first_group_periods = group_periods
+            
+        df = self.simulation_dataframe.copy()
+        
+        # Define column categories
+        flow_columns = [
+            'income_cash_inflow_before_tax', 'income_gain_tax',
+            'income_cash_inflow', 'unit_outflow', 'capital_cash_inflow_before_tax',
+            'capital_gain_tax', 'capital_cash_inflow', 'cash_inflow', 'unit_inflow',
+            'cash_outflow', 'cash_flow', 'unit_flow'
+        ]
+        
+        beginning_stock_columns = [
+            'pre_cash_balance', 'pre_al_unit', 'pre_al_balance',
+            'pre_al_book_balance', 'pre_unrealized_gl'
+        ]
+        
+        ending_stock_columns = [
+            'cash_balance', 'al_unit', 'al_balance', 'al_book_balance', 'unrealized_gl'
+        ]
+        
+        rate_columns = [
+            'price', 'rate', 'cash_inflow_per_unit', 'income_gain_tax_rate', 'capital_gain_tax_rate'
+        ]
+        
+        # Create group labels
+        groups = []
+        current_period = 0
+        group_id = 0
+        
+        while current_period < len(df):
+            if group_id == 0:
+                # First group
+                periods_in_group = min(first_group_periods, len(df) - current_period)
+            else:
+                # Regular groups
+                periods_in_group = min(group_periods, len(df) - current_period)
+            
+            # Assign group_id to periods in this group
+            for i in range(periods_in_group):
+                groups.append(group_id)
+            
+            current_period += periods_in_group
+            group_id += 1
+        
+        # Add group column
+        df['group'] = groups
+        
+        # Prepare aggregation dictionary
+        agg_dict = {}
+        
+        # Flow columns: sum
+        for col in flow_columns:
+            if col in df.columns:
+                agg_dict[col] = 'sum'
+        
+        # Beginning stock columns: first
+        for col in beginning_stock_columns:
+            if col in df.columns:
+                agg_dict[col] = 'first'
+        
+        # Ending stock columns: last
+        for col in ending_stock_columns:
+            if col in df.columns:
+                agg_dict[col] = 'last'
+        
+        # Rate columns: based on rate_aggregation parameter
+        for col in rate_columns:
+            if col in df.columns:
+                agg_dict[col] = rate_aggregation
+        
+        # Group by and aggregate
+        grouped_df = df.groupby('group').agg(agg_dict).reset_index(drop=True)
+        
+        # Maintain the original column order
+        original_columns = [
+            'price', 'pre_cash_balance', 'pre_al_unit', 'pre_al_balance',
+            'pre_al_book_balance', 'pre_unrealized_gl', 'cash_inflow_per_unit',
+            'income_cash_inflow_before_tax', 'income_gain_tax_rate',
+            'income_gain_tax', 'income_cash_inflow', 'unit_outflow',
+            'capital_cash_inflow_before_tax', 'capital_gain_tax_rate',
+            'capital_gain_tax', 'capital_cash_inflow', 'cash_inflow', 'unit_inflow',
+            'cash_outflow', 'cash_flow', 'unit_flow', 'cash_balance', 'al_unit',
+            'al_balance', 'al_book_balance', 'unrealized_gl', 'rate'
+        ]
+        
+        # Reorder columns to match original order
+        available_columns = [col for col in original_columns if col in grouped_df.columns]
+        grouped_df = grouped_df[available_columns]
+        
+        # Set index name
+        grouped_df.index.name = 'time_period'
+        
+        return grouped_df
