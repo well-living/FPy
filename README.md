@@ -16,50 +16,21 @@ A comprehensive Python package for financial planning and analysis, providing to
 pip install fpyjp
 ```
 
-## Requirements
-
-- Python >= 3.12
-- numpy
-- pandas
-- pydantic
 
 ## Quick Start
-
-### Cash Flow Modeling
-
-```python
-from fpyjp.schemas.cashflow import CashflowSchema
-
-# Monthly salary for 5 years
-salary = CashflowSchema(
-    name="Salary",
-    amount=5000.0,
-    sign=1,  # Inflow
-    n_periods=60,  # 5 years * 12 months
-    start=0,
-    end=59
-)
-
-# Variable bonus payments
-bonus = CashflowSchema(
-    name="Annual Bonus",
-    amount=[10000.0, 12000.0, 15000.0],  # Increasing over time
-    sign=1,
-    start=12  # Start after first year
-)
-```
 
 ### Asset and Liability Modeling
 
 ```python
 from fpyjp.schemas.balance import AssetLiabilitySchema
 
-# Create an asset with price growth
+# Create an asset with price growth - CORRECTED
 asset = AssetLiabilitySchema(
     name="Stock Portfolio",
     price=100.0,
     unit=10.0,
     balance=1000.0,
+    book_balance=1000.0,  # Required field missing from README
     cashinflow_per_unit=2.0,  # Dividend per share
     rate=0.05  # 5% annual growth
 )
@@ -71,9 +42,9 @@ print(f"Book balance: {asset.book_balance}")
 ### Interest Factor Calculations
 
 ```python
-from fpyjp.schemas.interest_factor import InterestFactor
+from fpyjp.core.interest_factor import InterestFactor
 
-# Calculate loan payments
+# Calculate loan payments - CORRECTED
 loan = InterestFactor(rate=0.05, time_period=30, amount=300000)
 
 monthly_payment = loan.calculate_capital_recovery()
@@ -86,14 +57,26 @@ future_value = investment.calculate_future_value()
 print(f"Future value: ${future_value:.2f}")
 ```
 
-### Financial Simulation
+### Financial Simulation - CORRECTED VERSION
 
 ```python
 from fpyjp.core.balance_simulator import AssetLiabilitySimulator
+from fpyjp.schemas.balance import AssetLiabilitySchema
 
-# Create simulator with initial conditions
+# Create asset schema properly
+asset = AssetLiabilitySchema(
+    name="Stock Portfolio",
+    price=50.0,
+    unit=2000.0,  # 100,000 / 50 = 2000 units
+    balance=100000.0,
+    book_balance=100000.0,  # Required field
+    cashinflow_per_unit=1.0,
+    rate=0.08
+)
+
+# Create simulator with correct parameter structure
 simulator = AssetLiabilitySimulator(
-    al_schema=asset,
+    al_schema=asset,  # Use al_schema parameter
     initial_cash_balance=5000.0,
     capital_cash_inflow_before_tax=0.0,
     cash_outflow=500.0,  # Monthly investment
@@ -110,111 +93,87 @@ print(f"Final asset value: {results['al_balance'].iloc[-1]:.2f}")
 print(f"Total unrealized gains: {results['unrealized_gl'].iloc[-1]:.2f}")
 ```
 
-## Core Components
+## Key Corrections Made
 
-### CashflowSchema
+### 1. AssetLiabilitySchema Requirements
+- **Added `book_balance`**: This is a required field that was missing from the README
+- **Fixed validation**: The `price * unit = balance` relationship must be maintained
 
-Flexible cash flow modeling with:
+### 2. AssetLiabilitySimulator Parameters
+- **Use `al_schema`**: The constructor expects `al_schema` parameter, not individual asset parameters
+- **Parameter structure**: The README mixed the old-style individual parameters with the new schema-based approach
 
-- **Scalar or List Amounts**: Single values or time-varying amounts
-- **Timing Control**: Start, end, and step parameters
-- **Direction**: Inflow (+1) or outflow (-1) specification
-- **Automatic Validation**: Period consistency and amount validation
-
-### AssetLiabilitySchema
-
-Models financial assets and liabilities with the following features:
-
-- **Price and Unit Tracking**: Automatic balance calculation and validation
-- **Price Dynamics**: Support for growth rates and price evolution over time
-- **Cash Flows**: Income generation (dividends, interest, rent)
-- **Book Value Management**: Separate tracking of book vs. market values
-
-Key validation rules:
-- `price * unit = balance` relationship is maintained
-- `price[i] * (1 + rate[i]) = price[i+1]` for price evolution
-- Growth rates must be greater than -1
-
-### InterestFactor
-
-Time value of money calculations:
-
-- **Future Value**: Compound interest calculations
-- **Present Value**: Discounting future cash flows
-- **Annuities**: Regular payment series analysis
-- **Loan Calculations**: Payment schedules and amortization
-- **Investment Analysis**: Growth projections and comparisons
-
-### AssetLiabilitySimulator
-
-Comprehensive financial simulation engine:
-
-- **Period-by-Period Analysis**: Detailed tracking of all financial metrics
-- **Tax Calculations**: Separate income and capital gains tax handling
-- **Cash Flow Integration**: Income, capital, and operational cash flows
-- **Balance Sheet Evolution**: Assets, liabilities, and book values over time
-
-Simulation outputs include:
-- Price evolution and market values
-- Cash balances and flows
-- Unit transactions (buy/sell)
-- Tax calculations and net cash flows
-- Unrealized gains and losses
-
-## Advanced Usage
-
-### Complex Asset Modeling
+### 3. Working Bond Example (from notebooks)
 
 ```python
-# Asset with time-varying growth rates
-complex_asset = AssetLiabilitySchema(
-    name="Real Estate",
-    price=[100000, 105000, 112000, 118000],  # Historical prices
-    unit=1.0,
-    cashinflow_per_unit=[500, 520, 540, 560],  # Increasing rent
-    # Rate is automatically calculated from price evolution
-)
-```
+from fpyjp.schemas.balance import AssetLiabilitySchema
+from fpyjp.core.balance_simulator import AssetLiabilitySimulator
 
-### Comprehensive Financial Planning
+# Bond simulation - 5% coupon, 5-year term
+rate = 0.05
+time_period = 5
+amount = 1
 
-```python
-# Combine multiple components for complete financial plan
-portfolio = AssetLiabilitySchema(
-    name="Investment Portfolio",
-    balance=100000.0,
-    price=50.0,
-    rate=0.08,
-    cashinflow_per_unit=1.0
+al_schema = AssetLiabilitySchema(
+    price=1,
+    unit=0,
+    balance=0,
+    book_balance=0,
+    cashinflow_per_unit=rate,  # Coupon payments
+    rate=0,  # No price appreciation for bond
 )
 
 simulator = AssetLiabilitySimulator(
-    al_schema=portfolio,
-    initial_cash_balance=10000.0,
-    capital_cash_inflow_before_tax=0.0,
-    cash_outflow=[1000] * 120 + [0] * 180,  # Invest for 10 years, then hold
-    income_gain_tax_rate=0.15,
-    capital_gain_tax_rate=0.20
+    al_schema=al_schema,
+    initial_cash_balance=0,
+    capital_cash_inflow_before_tax=[0] * time_period + [amount],  # Principal repayment
+    cash_outflow=amount,  # Initial investment
+    income_gain_tax_rate=0,
+    capital_gain_tax_rate=0,
 )
 
-# 25-year simulation
-long_term_results = simulator.simulate(n_periods=300)
-
-# Analyze key metrics
-total_return = (long_term_results['al_balance'].iloc[-1] + 
-                long_term_results['cash_balance'].iloc[-1] - 
-                100000 - 10000)
-print(f"Total portfolio return: ${total_return:.2f}")
+results = simulator.simulate(n_periods=time_period+1)
 ```
 
-## Data Validation
+### 4. Working Loan Example (from notebooks)
 
-FPy uses Pydantic for comprehensive data validation:
+```python
+from fpyjp.schemas.balance import AssetLiabilitySchema
+from fpyjp.core.balance_simulator import AssetLiabilitySimulator
+from fpyjp.core.interest_factor import InterestFactor
 
-- **Type Safety**: Automatic type checking and conversion
-- **Range Validation**: Constraints on numerical values
-- **Relationship Validation**: Complex inter-field validations
-- **Error Messages**: Clear, actionable error descriptions
+# Equal payment loan simulation
+rate = 0.05
+time_period = 5
+amount = 1
+
+al_schema = AssetLiabilitySchema(
+    price=1,
+    unit=-amount,  # Negative for liability
+    balance=-amount,
+    book_balance=-amount,
+    cashinflow_per_unit=0,  # Interest is handled by rate
+    rate=rate,  # Interest rate for growing liability
+    allow_negative_unit=True  # Required for liabilities
+)
+
+monthly_payment = InterestFactor(
+    rate=rate, 
+    time_period=time_period, 
+    amount=amount
+).calculate_capital_recovery()
+
+simulator = AssetLiabilitySimulator(
+    al_schema=al_schema,
+    initial_cash_balance=0,
+    capital_cash_inflow_before_tax=0,
+    cash_outflow=[0] + [monthly_payment] * time_period,  # Payments start period 1
+    income_gain_tax_rate=0,
+    capital_gain_tax_rate=0,
+)
+
+results = simulator.simulate(n_periods=time_period+1)
+```
 
 ## Contributing
 

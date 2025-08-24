@@ -463,4 +463,155 @@ class AssetLiabilitySimulator:
             current_al_balance = new_al_balance * (1 + rate)
             current_al_book_balance = new_al_book_balance
             
+        # Store the simulation result
+        self.simulation_dataframe = df.copy()
+        
         return df
+    
+
+
+    def calculate_grouped(
+        self,
+        group_periods: int = 12,
+        first_group_periods: Optional[int] = None,
+        rate_aggregation: str = "last"
+    ) -> pd.DataFrame:
+        """
+        Calculate grouped simulation results by aggregating periods.
+        
+        Parameters
+        ----------
+        group_periods : int, default 12
+            Number of periods to group together for regular groups
+        first_group_periods : Optional[int], default None
+            Number of periods for the first group. If None, uses group_periods
+        rate_aggregation : Literal["first", "last", "mean"], default "last"
+            How to aggregate rate-type columns ('price', 'rate', 'income_gain_tax_rate', 'capital_gain_tax_rate'):
+            - "first": Use the first value in each group (period beginning)
+            - "last": Use the last value in each group (period end)  
+            - "mean": Use the mean value across the group (period average)
+            
+        Returns
+        -------
+        pd.DataFrame
+            DataFrame with grouped results containing the same columns as simulation_dataframe.
+            Flow items are summed, beginning-of-period stock items use first values,
+            end-of-period stock items use last values, and rate items are aggregated 
+            according to rate_aggregation parameter.
+            
+        Raises
+        ------
+        ValueError
+            If simulation_dataframe is None (simulate() must be called first)
+            If group_periods <= 0
+            If first_group_periods is not None and <= 0
+            If rate_aggregation is not one of the valid options
+        """
+        if self.simulation_dataframe is None:
+            raise ValueError("simulation_dataframe is None. Call simulate() first.")
+        
+        if group_periods <= 0:
+            raise ValueError("group_periods must be positive")
+            
+        if first_group_periods is not None and first_group_periods <= 0:
+            raise ValueError("first_group_periods must be positive if provided")
+            
+        if rate_aggregation not in ["first", "last", "mean"]:
+            raise ValueError("rate_aggregation must be one of: 'first', 'last', 'mean'")
+        
+        # Use group_periods for first group if not specified
+        if first_group_periods is None:
+            first_group_periods = group_periods
+            
+        df = self.simulation_dataframe.copy()
+        
+        # Define column categories
+        flow_columns = [
+            'income_cash_inflow_before_tax', 'income_gain_tax',
+            'income_cash_inflow', 'unit_outflow', 'capital_cash_inflow_before_tax',
+            'capital_gain_tax', 'capital_cash_inflow', 'cash_inflow', 'unit_inflow',
+            'cash_outflow', 'cash_flow', 'unit_flow'
+        ]
+        
+        beginning_stock_columns = [
+            'pre_cash_balance', 'pre_al_unit', 'pre_al_balance',
+            'pre_al_book_balance', 'pre_unrealized_gl'
+        ]
+        
+        ending_stock_columns = [
+            'cash_balance', 'al_unit', 'al_balance', 'al_book_balance', 'unrealized_gl'
+        ]
+        
+        rate_columns = [
+            'price', 'rate', 'cash_inflow_per_unit', 'income_gain_tax_rate', 'capital_gain_tax_rate'
+        ]
+        
+        # Create group labels
+        groups = []
+        current_period = 0
+        group_id = 0
+        
+        while current_period < len(df):
+            if group_id == 0:
+                # First group
+                periods_in_group = min(first_group_periods, len(df) - current_period)
+            else:
+                # Regular groups
+                periods_in_group = min(group_periods, len(df) - current_period)
+            
+            # Assign group_id to periods in this group
+            for i in range(periods_in_group):
+                groups.append(group_id)
+            
+            current_period += periods_in_group
+            group_id += 1
+        
+        # Add group column
+        df['group'] = groups
+        
+        # Prepare aggregation dictionary
+        agg_dict = {}
+        
+        # Flow columns: sum
+        for col in flow_columns:
+            if col in df.columns:
+                agg_dict[col] = 'sum'
+        
+        # Beginning stock columns: first
+        for col in beginning_stock_columns:
+            if col in df.columns:
+                agg_dict[col] = 'first'
+        
+        # Ending stock columns: last
+        for col in ending_stock_columns:
+            if col in df.columns:
+                agg_dict[col] = 'last'
+        
+        # Rate columns: based on rate_aggregation parameter
+        for col in rate_columns:
+            if col in df.columns:
+                agg_dict[col] = rate_aggregation
+        
+        # Group by and aggregate
+        grouped_df = df.groupby('group').agg(agg_dict).reset_index(drop=True)
+        
+        # Maintain the original column order
+        original_columns = [
+            'price', 'pre_cash_balance', 'pre_al_unit', 'pre_al_balance',
+            'pre_al_book_balance', 'pre_unrealized_gl', 'cash_inflow_per_unit',
+            'income_cash_inflow_before_tax', 'income_gain_tax_rate',
+            'income_gain_tax', 'income_cash_inflow', 'unit_outflow',
+            'capital_cash_inflow_before_tax', 'capital_gain_tax_rate',
+            'capital_gain_tax', 'capital_cash_inflow', 'cash_inflow', 'unit_inflow',
+            'cash_outflow', 'cash_flow', 'unit_flow', 'cash_balance', 'al_unit',
+            'al_balance', 'al_book_balance', 'unrealized_gl', 'rate'
+        ]
+        
+        # Reorder columns to match original order
+        available_columns = [col for col in original_columns if col in grouped_df.columns]
+        grouped_df = grouped_df[available_columns]
+        
+        # Set index name
+        grouped_df.index.name = 'time_period'
+        
+        return grouped_df
