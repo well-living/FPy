@@ -56,7 +56,6 @@ class AssetLiabilitySchema(BaseModel):
     )
     unit: Optional[float] = Field(
         default=None,
-        ge=0,
         description="Number of units of the asset or liability (must be non-negative)"
     )
     balance: Optional[float] = Field(
@@ -74,6 +73,10 @@ class AssetLiabilitySchema(BaseModel):
     rate: Optional[Union[float, List[float]]] = Field(
         default=None,
         description="Price growth rate (rate of return), must be greater than -1"
+    )
+    allow_negative_unit: bool = Field(
+        default=False,
+        description="Whether to allow negative unit values (for short positions)"
     )
     
     @field_validator('rate')
@@ -109,6 +112,7 @@ class AssetLiabilitySchema(BaseModel):
             if v <= -1:
                 raise ValueError(f'rate must be greater than -1, got {v}')
             return v
+    
     
     @model_validator(mode='after')
     def validate_price_unit_balance(self):
@@ -152,7 +156,19 @@ class AssetLiabilitySchema(BaseModel):
             elif self.unit is None:
                 if current_price == 0:
                     raise ValueError('Cannot calculate unit when price is 0')
-                self.unit = self.balance / current_price
+                calculated_unit = self.balance / current_price
+                
+                # Apply unit validation after calculation
+                if not self.allow_negative_unit and calculated_unit < 0:
+                    raise ValueError(
+                        f'Calculated unit ({calculated_unit}) is negative, but allow_negative_unit is False'
+                    )
+                
+                self.unit = calculated_unit
+        
+        # Validate unit after all calculations and assignments are complete
+        if self.unit is not None and not self.allow_negative_unit and self.unit < 0:
+            raise ValueError(f'unit must be non-negative when allow_negative_unit is False, got {self.unit}')
         
         if provided_values == 3:
             # Always verify the relationship holds using current price

@@ -83,7 +83,7 @@ class Loan(BaseModel):
         min_length=1,
         max_length=50,
         description="Name of the loan product",
-        examples=["フラット35", "JASSO奨学金", "住宅ローン"]
+        examples=["JHFフラット35", "JASSO奨学金", "住宅ローン", "教育ローン"]
     )
     
     interest_rate: Union[float, List[float]] = Field(
@@ -127,12 +127,12 @@ class Loan(BaseModel):
     )
     
     repayment_method: RepaymentMethod = Field(
-        default=RepaymentMethod.EQUAL_PRINCIPAL,  # 元金均等をデフォルトに
+        default=RepaymentMethod.EQUAL_PRINCIPAL,  # デフォルトは元金均等
         description="Method of loan repayment"
     )
     
     interest_rate_type: InterestRateType = Field(
-        default=InterestRateType.FIXED,
+        default=InterestRateType.FIXED,  # デフォルトは固定金利
         description="Type of interest rate"
     )
 
