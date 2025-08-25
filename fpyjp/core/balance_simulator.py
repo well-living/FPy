@@ -908,11 +908,14 @@ class LifecycleInvestmentSimulator:
             rate=self.accumulation_rate,
         )
         
+        # Ensure contribution_amount is applied to all accumulation periods
+        cash_outflow_schedule = [self.contribution_amount] * self.accumulation_periods
+        
         simulator = AssetLiabilitySimulator(
             al_schema=al_schema,
             initial_cash_balance=self.initial_cash_balance,
             capital_cash_inflow_before_tax=0,
-            cash_outflow=self.contribution_amount,
+            cash_outflow=cash_outflow_schedule,
             income_gain_tax_rate=self.income_gain_tax_rate,
             capital_gain_tax_rate=self.capital_gain_tax_rate,
         )
@@ -986,6 +989,9 @@ class LifecycleInvestmentSimulator:
         
         withdrawal_amount = interest_factor.calculate_capital_recovery()
         
+        # Ensure withdrawal_amount is applied to all decumulation periods
+        capital_inflow_schedule = [withdrawal_amount] * self.decumulation_periods
+        
         al_schema = AssetLiabilitySchema(
             price=final_hold['price'] * (1 + withdrawal_rate),
             unit=final_hold['al_unit'],
@@ -998,13 +1004,14 @@ class LifecycleInvestmentSimulator:
         simulator = AssetLiabilitySimulator(
             al_schema=al_schema,
             initial_cash_balance=final_hold['cash_balance'],
-            capital_cash_inflow_before_tax=withdrawal_amount,  # Withdrawal amount
+            capital_cash_inflow_before_tax=capital_inflow_schedule,  # List of withdrawal amounts
             cash_outflow=0,
             income_gain_tax_rate=self.income_gain_tax_rate,
             capital_gain_tax_rate=self.capital_gain_tax_rate,
         )
         
         return simulator.simulate(n_periods=self.decumulation_periods)
+    
     
     def _get_initial_rate(self, rate: Union[float, List[float]]) -> float:
         """
