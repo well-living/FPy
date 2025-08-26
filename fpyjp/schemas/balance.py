@@ -170,10 +170,11 @@ class AssetLiabilitySchema(BaseModel):
         if self.unit is not None and not self.allow_negative_unit and self.unit < 0:
             raise ValueError(f'unit must be non-negative when allow_negative_unit is False, got {self.unit}')
         
+        tolerance = 1e-6  # または 1e-8
         if provided_values == 3:
             # Always verify the relationship holds using current price
             current_price = self.price[0] if isinstance(self.price, list) else self.price
-            if abs(current_price * self.unit - self.balance) > 1e-10:
+            if abs(current_price * self.unit - self.balance) > tolerance:
                 raise ValueError(
                     f'price * unit must equal balance. '
                     f'Current price: {current_price}, unit: {self.unit}, balance: {self.balance}'
