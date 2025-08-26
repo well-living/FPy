@@ -1,6 +1,6 @@
 [project]
 name = "fpyjp"
-version = "0.0.6"
+version = "0.0.7"
 description = "FPy-JP - Financial Planning in Python (Based on the Japanese System)"
 authors = [
     {name = "well-living"}

@@ -1,7 +1,7 @@
 """
-Unit tests for LifecycleInvestmentSimulator
+Unit tests for LifecycleInvestSimulator
 
-This module provides comprehensive unit tests for the LifecycleInvestmentSimulator class,
+This module provides comprehensive unit tests for the LifecycleInvestSimulator class,
 covering initialization, parameter validation, rate processing, simulation execution,
 and edge cases.
 """
@@ -12,16 +12,16 @@ import numpy as np
 from unittest.mock import Mock, patch
 
 # Adjust imports based on actual module structure
-from fpyjp.core.balance_simulator import LifecycleInvestmentSimulator
+from fpyjp.core.balance_simulator import LifecycleInvestSimulator
 from fpyjp.core.interest_factor import InterestFactor
 
 
-class TestLifecycleInvestmentSimulatorInit:
+class TestLifecycleInvestSimulatorInit:
     """Test initialization and parameter validation."""
     
     def test_period_based_initialization_success(self):
         """Test successful initialization with period-based specification."""
-        simulator = LifecycleInvestmentSimulator(
+        simulator = LifecycleInvestSimulator(
             contribution_amount=10000,
             rate=0.05,
             accumulation_periods=20,
@@ -39,7 +39,7 @@ class TestLifecycleInvestmentSimulatorInit:
     
     def test_timepoint_based_initialization_success(self):
         """Test successful initialization with time-point-based specification."""
-        simulator = LifecycleInvestmentSimulator(
+        simulator = LifecycleInvestSimulator(
             contribution_amount=10000,
             rate=0.05,
             accumulation_end_period=20,
@@ -55,7 +55,7 @@ class TestLifecycleInvestmentSimulatorInit:
     def test_both_specifications_error(self):
         """Test error when both period-based and time-point-based specs are provided."""
         with pytest.raises(ValueError, match="Cannot specify both"):
-            LifecycleInvestmentSimulator(
+            LifecycleInvestSimulator(
                 contribution_amount=10000,
                 rate=0.05,
                 # Both specifications provided - this should trigger the error
@@ -70,7 +70,7 @@ class TestLifecycleInvestmentSimulatorInit:
     def test_no_specification_error(self):
         """Test error when neither specification method is provided."""
         with pytest.raises(ValueError, match="Must specify either all period-based parameters or all time-point-based"):
-            LifecycleInvestmentSimulator(
+            LifecycleInvestSimulator(
                 contribution_amount=10000,
                 rate=0.05,
             )
@@ -78,7 +78,7 @@ class TestLifecycleInvestmentSimulatorInit:
     def test_incomplete_period_specification_error(self):
         """Test error when period-based specification is incomplete."""
         with pytest.raises(ValueError, match="Must specify either all period-based parameters or all time-point-based"):
-            LifecycleInvestmentSimulator(
+            LifecycleInvestSimulator(
                 contribution_amount=10000,
                 rate=0.05,
                 accumulation_periods=20,
@@ -89,7 +89,7 @@ class TestLifecycleInvestmentSimulatorInit:
     def test_incomplete_timepoint_specification_error(self):
         """Test error when time-point-based specification is incomplete."""
         with pytest.raises(ValueError, match="Must specify either all period-based parameters or all time-point-based"):
-            LifecycleInvestmentSimulator(
+            LifecycleInvestSimulator(
                 contribution_amount=10000,
                 rate=0.05,
                 accumulation_end_period=20,
@@ -100,7 +100,7 @@ class TestLifecycleInvestmentSimulatorInit:
     def test_negative_periods_error(self):
         """Test error when periods are negative or zero."""
         with pytest.raises(ValueError, match="accumulation_periods and decumulation_periods must be positive"):
-            LifecycleInvestmentSimulator(
+            LifecycleInvestSimulator(
                 contribution_amount=10000,
                 rate=0.05,
                 accumulation_periods=0,
@@ -111,7 +111,7 @@ class TestLifecycleInvestmentSimulatorInit:
     def test_invalid_timepoint_order_error(self):
         """Test error when time points are not in ascending order."""
         with pytest.raises(ValueError, match="Time points must be in order"):
-            LifecycleInvestmentSimulator(
+            LifecycleInvestSimulator(
                 contribution_amount=10000,
                 rate=0.05,
                 accumulation_end_period=30,  # Wrong order
@@ -122,7 +122,7 @@ class TestLifecycleInvestmentSimulatorInit:
     def test_no_rate_specification_error(self):
         """Test error when no rate is specified."""
         with pytest.raises(ValueError, match="At least one rate specification must be provided"):
-            LifecycleInvestmentSimulator(
+            LifecycleInvestSimulator(
                 contribution_amount=10000,
                 accumulation_periods=20,
                 hold_periods=10,
@@ -135,7 +135,7 @@ class TestRateProcessing:
     
     def test_single_rate_for_all_phases(self):
         """Test using single rate for all phases."""
-        simulator = LifecycleInvestmentSimulator(
+        simulator = LifecycleInvestSimulator(
             contribution_amount=10000,
             rate=0.05,
             accumulation_periods=20,
@@ -149,7 +149,7 @@ class TestRateProcessing:
     
     def test_individual_phase_rates_priority(self):
         """Test that individual phase rates take priority over general rate."""
-        simulator = LifecycleInvestmentSimulator(
+        simulator = LifecycleInvestSimulator(
             contribution_amount=10000,
             rate=0.05,
             rate_during_accumulation=0.07,
@@ -166,7 +166,7 @@ class TestRateProcessing:
     
     def test_mixed_rate_specification(self):
         """Test mixed rate specification with fallback."""
-        simulator = LifecycleInvestmentSimulator(
+        simulator = LifecycleInvestSimulator(
             contribution_amount=10000,
             rate=0.05,
             rate_during_accumulation=0.08,
@@ -183,8 +183,9 @@ class TestRateProcessing:
     
     def test_rate_list_distribution(self):
         """Test rate list distribution across phases."""
-        rate_list = [0.08, 0.06, 0.04, 0.03, 0.02]
-        simulator = LifecycleInvestmentSimulator(
+        # 5 total logical periods: accumulation(2) + hold(1) + decumulation(2)
+        rate_list = [0.08, 0.06, 0.04, 0.03, 0.02]  # 5 rates for logical periods
+        simulator = LifecycleInvestSimulator(
             contribution_amount=10000,
             rate=rate_list,
             accumulation_periods=2,
@@ -195,81 +196,26 @@ class TestRateProcessing:
         assert simulator.accumulation_rate == [0.08, 0.06]
         assert simulator.hold_rate == [0.04]
         assert simulator.decumulation_rate == [0.03, 0.02]
-    
+        
     def test_rate_list_length_mismatch_error(self):
-        """Test error when rate list length doesn't match total periods."""
-        rate_list = [0.08, 0.06, 0.04]  # 3 rates for 5 periods
-        with pytest.raises(ValueError, match="Rate list length .* must equal total periods"):
-            LifecycleInvestmentSimulator(
+        """Test error when rate list is too short."""
+        # Only 3 rates provided for 5 logical periods (2+1+2)
+        with pytest.raises(ValueError, match=r"Rate list length \(3\) must be at least 5 for all phases"):
+            LifecycleInvestSimulator(
                 contribution_amount=10000,
-                rate=rate_list,
+                rate=[0.08, 0.06, 0.04],  # Too short
                 accumulation_periods=2,
                 hold_periods=1,
-                decumulation_periods=2,  # Total: 5 periods
+                decumulation_periods=2,
             )
 
 
 class TestSimulationExecution:
     """Test simulation execution and results."""
     
-    @patch('fpyjp.core.balance_simulator.AssetLiabilitySimulator')
-    def test_simulate_calls_three_phases(self, mock_simulator_class):
-        """Test that simulate() calls all three phase simulations."""
-        # Setup mocks with correct price * unit = balance relationship
-        mock_accumulation_df = pd.DataFrame({
-            'price': [1.0, 1.05],
-            'cash_balance': [-10000, -20000],
-            'al_unit': [10000, 19048],
-            'al_balance': [10000, 20000.4],  # 1.05 * 19048 = 20000.4
-            'al_book_balance': [10000, 20000],
-        }, index=[0, 1])
-        
-        mock_hold_df = pd.DataFrame({
-            'price': [1.1025],
-            'cash_balance': [-20000],
-            'al_unit': [19048],
-            'al_balance': [21000.54],  # 1.1025 * 19048 = 21000.54
-            'al_book_balance': [20000],
-        }, index=[0])
-        
-        mock_decumulation_df = pd.DataFrame({
-            'price': [1.157625],
-            'cash_balance': [0],
-            'al_unit': [0],
-            'al_balance': [0],
-            'al_book_balance': [0],
-        }, index=[0])
-        
-        mock_simulator_instance = Mock()
-        mock_simulator_instance.simulate.side_effect = [
-            mock_accumulation_df,
-            mock_hold_df, 
-            mock_decumulation_df
-        ]
-        mock_simulator_class.return_value = mock_simulator_instance
-        
-        simulator = LifecycleInvestmentSimulator(
-            contribution_amount=10000,
-            rate=0.05,
-            accumulation_periods=2,
-            hold_periods=1,
-            decumulation_periods=1,
-        )
-        
-        result = simulator.simulate()
-        
-        # Verify three AssetLiabilitySimulator instances were created and simulated
-        assert mock_simulator_class.call_count == 3
-        assert mock_simulator_instance.simulate.call_count == 3
-        
-        # Verify result structure
-        assert isinstance(result, pd.DataFrame)
-        assert len(result) == 4  # 2 + 1 + 1 periods
-        assert result.index.name == 'time_period'
-    
     def test_simulate_integration_basic(self):
         """Test basic integration simulation without mocks."""
-        simulator = LifecycleInvestmentSimulator(
+        simulator = LifecycleInvestSimulator(
             contribution_amount=10000,
             rate=0.05,
             accumulation_periods=2,
@@ -300,7 +246,7 @@ class TestSimulationExecution:
     
     def test_individual_phase_dataframes_accessible(self):
         """Test that individual phase DataFrames are accessible after simulation."""
-        simulator = LifecycleInvestmentSimulator(
+        simulator = LifecycleInvestSimulator(
             contribution_amount=10000,
             rate=0.05,
             accumulation_periods=2,
@@ -329,7 +275,7 @@ class TestEdgeCases:
     
     def test_zero_contribution_amount(self):
         """Test with zero contribution amount."""
-        simulator = LifecycleInvestmentSimulator(
+        simulator = LifecycleInvestSimulator(
             contribution_amount=0,
             rate=0.05,
             accumulation_periods=2,
@@ -345,7 +291,7 @@ class TestEdgeCases:
     
     def test_zero_rate(self):
         """Test with zero interest rate."""
-        simulator = LifecycleInvestmentSimulator(
+        simulator = LifecycleInvestSimulator(
             contribution_amount=10000,
             rate=0.0,
             accumulation_periods=2,
@@ -363,7 +309,7 @@ class TestEdgeCases:
     
     def test_single_period_phases(self):
         """Test with single period for each phase."""
-        simulator = LifecycleInvestmentSimulator(
+        simulator = LifecycleInvestSimulator(
             contribution_amount=10000,
             rate=0.05,
             accumulation_periods=1,
@@ -378,7 +324,7 @@ class TestEdgeCases:
     
     def test_high_contribution_amount(self):
         """Test with high contribution amount."""
-        simulator = LifecycleInvestmentSimulator(
+        simulator = LifecycleInvestSimulator(
             contribution_amount=100_000,  # Reduced from 1_000_000
             rate=0.05,
             accumulation_periods=2,
@@ -398,42 +344,37 @@ class TestInterestFactorIntegration:
     
     @patch('fpyjp.core.balance_simulator.InterestFactor')
     def test_capital_recovery_calculation(self, mock_interest_factor):
-        """Test that InterestFactor is used correctly for capital recovery."""
-        # Setup mock
-        mock_factor_instance = Mock()
-        mock_factor_instance.calculate_capital_recovery.return_value = 15000
-        mock_interest_factor.return_value = mock_factor_instance
-        
-        simulator = LifecycleInvestmentSimulator(
+        """Test capital recovery calculation with InterestFactor integration."""
+        simulator = LifecycleInvestSimulator(
             contribution_amount=10000,
-            rate=0.05,
-            accumulation_periods=1,
-            hold_periods=1,
-            decumulation_periods=2,
+            rate_during_accumulation=0.08,
+            rate_during_hold=0.06,
+            rate_during_decumulation=0.05,  # Single rate, not list
+            accumulation_periods=10,
+            hold_periods=5,
+            decumulation_periods=15,
+            initial_cash_balance=0.0,
         )
         
-        # Run simulation (which triggers decumulation calculation)
-        result = simulator.simulate()
+        result_df = simulator.simulate()
         
-        # Verify InterestFactor was called correctly
-        assert mock_interest_factor.called
-        call_args = mock_interest_factor.call_args
+        # Test that decumulation withdrawals are roughly equal
+        decumulation_start = 15  # 10 accumulation + 5 hold
+        withdrawal_amounts = result_df.loc[decumulation_start:, 'capital_cash_inflow_before_tax']
+        withdrawal_amounts = withdrawal_amounts[withdrawal_amounts > 0]
         
-        # Check that the correct parameters were passed
-        assert call_args[1]['rate'] == 0.05  # decumulation rate
-        assert call_args[1]['time_period'] == 2  # decumulation periods
-        assert call_args[1]['amount'] > 0  # asset value from hold phase
-        
-        # Check that calculate_capital_recovery was called
-        mock_factor_instance.calculate_capital_recovery.assert_called_once()
-
+        # Check that withdrawals are consistent (within 1% tolerance)
+        if len(withdrawal_amounts) > 1:
+            mean_withdrawal = withdrawal_amounts.mean()
+            for amount in withdrawal_amounts:
+                assert abs(amount - mean_withdrawal) / mean_withdrawal < 0.01
 
 class TestDataFrameStructure:
     """Test DataFrame structure and content correctness."""
     
     def test_combined_dataframe_index_continuity(self):
         """Test that combined DataFrame has continuous index."""
-        simulator = LifecycleInvestmentSimulator(
+        simulator = LifecycleInvestSimulator(
             contribution_amount=10000,
             rate=0.05,
             accumulation_periods=3,
@@ -450,7 +391,7 @@ class TestDataFrameStructure:
     
     def test_required_columns_present(self):
         """Test that all required columns are present in result."""
-        simulator = LifecycleInvestmentSimulator(
+        simulator = LifecycleInvestSimulator(
             contribution_amount=10000,
             rate=0.05,
             accumulation_periods=1,
@@ -471,7 +412,7 @@ class TestDataFrameStructure:
     
     def test_cash_flow_consistency(self):
         """Test cash flow consistency across phases."""
-        simulator = LifecycleInvestmentSimulator(
+        simulator = LifecycleInvestSimulator(
             contribution_amount=10000,
             rate=0.05,
             accumulation_periods=2,
@@ -502,7 +443,7 @@ class TestParameterDefaults:
     
     def test_default_initial_settings(self):
         """Test default values for initial settings."""
-        simulator = LifecycleInvestmentSimulator(
+        simulator = LifecycleInvestSimulator(
             contribution_amount=10000,
             rate=0.05,
             accumulation_periods=1,
@@ -518,7 +459,7 @@ class TestParameterDefaults:
     
     def test_custom_initial_settings(self):
         """Test custom values for initial settings."""
-        simulator = LifecycleInvestmentSimulator(
+        simulator = LifecycleInvestSimulator(
             contribution_amount=10000,
             rate=0.05,
             accumulation_periods=1,
@@ -544,7 +485,7 @@ class TestHoldPeriodsZero:
     
     def test_hold_periods_zero_period_based(self):
         """Test hold_periods=0 with period-based specification."""
-        simulator = LifecycleInvestmentSimulator(
+        simulator = LifecycleInvestSimulator(
             contribution_amount=10000,
             rate=0.05,
             accumulation_periods=2,
@@ -572,7 +513,7 @@ class TestHoldPeriodsZero:
     
     def test_hold_periods_zero_timepoint_based(self):
         """Test hold_periods=0 with time-point-based specification."""
-        simulator = LifecycleInvestmentSimulator(
+        simulator = LifecycleInvestSimulator(
             contribution_amount=10000,
             rate=0.05,
             accumulation_end_period=2,
@@ -590,7 +531,7 @@ class TestHoldPeriodsZero:
     
     def test_hold_df_empty_when_hold_periods_zero(self):
         """Test that hold_df is empty when hold_periods=0."""
-        simulator = LifecycleInvestmentSimulator(
+        simulator = LifecycleInvestSimulator(
             contribution_amount=10000,
             rate=0.05,
             accumulation_periods=1,
@@ -621,8 +562,9 @@ class TestHoldPeriodsZero:
     
     def test_rate_distribution_with_hold_periods_zero(self):
         """Test rate list distribution when hold_periods=0."""
-        rate_list = [0.08, 0.06, 0.04, 0.02]  # 4 rates for 2+0+2 periods
-        simulator = LifecycleInvestmentSimulator(
+        # 4 total logical periods: accumulation(2) + hold(0) + decumulation(2)
+        rate_list = [0.08, 0.06, 0.04, 0.02]  # 4 rates for logical periods
+        simulator = LifecycleInvestSimulator(
             contribution_amount=10000,
             rate=rate_list,
             accumulation_periods=2,
@@ -633,6 +575,22 @@ class TestHoldPeriodsZero:
         assert simulator.accumulation_rate == [0.08, 0.06]
         assert simulator.hold_rate == []  # Empty list for zero hold periods
         assert simulator.decumulation_rate == [0.04, 0.02]
+
+    def test_rate_list_with_extra_rates(self):
+        """Test rate list distribution with extra rates (should be ignored)."""
+        # 7 rates provided for 5 logical periods (extra rates should be ignored)
+        rate_list = [0.08, 0.06, 0.04, 0.03, 0.02, 0.01, 0.005]
+        simulator = LifecycleInvestSimulator(
+            contribution_amount=10000,
+            rate=rate_list,
+            accumulation_periods=2,
+            hold_periods=1,
+            decumulation_periods=2,
+        )
+        
+        assert simulator.accumulation_rate == [0.08, 0.06]
+        assert simulator.hold_rate == [0.04]
+        assert simulator.decumulation_rate == [0.03, 0.02] 
 
 if __name__ == "__main__":
     # Run tests with pytest

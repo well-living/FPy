@@ -618,7 +618,7 @@ class AssetLiabilitySimulator:
         return grouped_df
 
 
-class LifecycleInvestmentSimulator:
+class LifecycleInvestSimulator:
     """
     Investment Lifecycle Simulator
     
@@ -878,13 +878,17 @@ class LifecycleInvestmentSimulator:
         Parameters
         ----------
         rate_list : List[float]
-            List of rates to distribute
+            List of rates to distribute. Can be:
+            - Exactly total_periods length (accumulation + hold + decumulation)
+            - Longer than total_periods (extra rates will be truncated)
+            - Must be at least total_periods length
         """
-        total_periods = self.accumulation_periods + self.hold_periods + self.decumulation_periods
-        if len(rate_list) != total_periods:
-            raise ValueError(f"Rate list length ({len(rate_list)}) must equal total periods ({total_periods})")
+        total_logical_periods = self.accumulation_periods + self.hold_periods + self.decumulation_periods
         
-        # Distribute rates to each phase
+        if len(rate_list) < total_logical_periods:
+            raise ValueError(f"Rate list length ({len(rate_list)}) must be at least {total_logical_periods} for all phases")
+        
+        # Distribute rates to each phase using only the needed periods
         acc_end = self.accumulation_periods
         hold_end = acc_end + self.hold_periods
         
@@ -896,7 +900,16 @@ class LifecycleInvestmentSimulator:
         else:
             self.hold_rate = rate_list[acc_end:hold_end]
             
-        self.decumulation_rate = rate_list[hold_end:]
+        # For decumulation, take exactly decumulation_periods rates
+        # The internal simulation logic will handle the extra period as needed
+        decumulation_rates = rate_list[hold_end:hold_end + self.decumulation_periods]
+        
+        # Ensure we have enough rates for decumulation
+        if len(decumulation_rates) < self.decumulation_periods:
+            # This shouldn't happen given our length check above, but just in case
+            raise ValueError(f"Insufficient rates for decumulation phase")
+        
+        self.decumulation_rate = decumulation_rates
     
     def simulate(self) -> pd.DataFrame:
         """
@@ -953,6 +966,7 @@ class LifecycleInvestmentSimulator:
         
         return simulator.simulate(n_periods=self.accumulation_periods)
     
+
     def _simulate_hold(self) -> pd.DataFrame:
         """
         Execute hold phase simulation
@@ -984,13 +998,13 @@ class LifecycleInvestmentSimulator:
         # Get final state from accumulation phase
         final_accumulation = self.accumulation_df.iloc[-1]
         
-        # Calculate initial rate for hold phase
-        hold_rate = self._get_initial_rate(self.hold_rate)
+        # Calculate initial rate for hold phase using the last rate from accumulation phase
+        transition_rate = self._get_transition_rate(self.accumulation_rate, is_end=True)
         
         al_schema = AssetLiabilitySchema(
-            price=final_accumulation['price'] * (1 + hold_rate),
+            price=final_accumulation['price'] * (1 + transition_rate),
             unit=final_accumulation['al_unit'],
-            balance=final_accumulation['al_balance'] * (1 + hold_rate),
+            balance=final_accumulation['al_balance'] * (1 + transition_rate),
             book_balance=final_accumulation['al_book_balance'],
             cashinflow_per_unit=self.cash_inflow_per_unit,
             rate=self.hold_rate,
@@ -1006,7 +1020,8 @@ class LifecycleInvestmentSimulator:
         )
         
         return simulator.simulate(n_periods=self.hold_periods)
-    
+
+
     def _simulate_decumulation(self) -> pd.DataFrame:
         """
         Execute decumulation phase simulation
@@ -1019,78 +1034,121 @@ class LifecycleInvestmentSimulator:
         if self.hold_df is None:
             raise ValueError("Hold phase simulation must be completed first")
         
-        # Determine the final state from the previous phase
+        # Determine the final state from the previous phase and transition rate
         if len(self.hold_df) == 0:
-            # No hold phase - use accumulation phase final state
+            # No hold phase, transition directly from accumulation
             if self.accumulation_df is None or len(self.accumulation_df) == 0:
                 raise ValueError("No valid data from previous phases")
             final_state = self.accumulation_df.iloc[-1]
-            
-            # Apply one period of growth using decumulation rate for price transition
-            decumulation_rate = self._get_initial_rate(self.decumulation_rate)
-            adjusted_price = final_state['price'] * (1 + decumulation_rate)
-            adjusted_balance = final_state['al_balance'] * (1 + decumulation_rate)
+            # Use the last rate from accumulation phase for transition
+            transition_rate = self._get_transition_rate(self.accumulation_rate, is_end=True)
         else:
-            # Normal case - use hold phase final state
+            # Hold phase exists, transition from hold
             final_state = self.hold_df.iloc[-1]
-            decumulation_rate = self._get_initial_rate(self.decumulation_rate)
-            adjusted_price = final_state['price'] * (1 + decumulation_rate)
-            adjusted_balance = final_state['al_balance'] * (1 + decumulation_rate)
+            # Use the last rate from hold phase for transition
+            transition_rate = self._get_transition_rate(self.hold_rate, is_end=True)
         
-        # Calculate withdrawal amount for complete decumulation over specified periods
-        # Use InterestFactor's capital recovery factor for equal periodic withdrawals
-        total_asset_value = adjusted_balance
+        # Calculate the correct asset value for decumulation start
+        total_asset_value = final_state['al_balance'] * (1 + transition_rate)
         
-        # Use InterestFactor to calculate capital recovery factor
-        interest_factor = InterestFactor(
-            rate=decumulation_rate,
-            time_period=self.decumulation_periods,
-            amount=total_asset_value
-        )
-        
-        withdrawal_amount = interest_factor.calculate_capital_recovery()
-        
-        # Ensure withdrawal_amount is applied to all decumulation periods
-        capital_inflow_schedule = [withdrawal_amount] * self.decumulation_periods
-        
-        al_schema = AssetLiabilitySchema(
-            price=adjusted_price,
-            unit=final_state['al_unit'],
-            balance=adjusted_price * final_state['al_unit'],  # Ensure price * unit = balance
-            book_balance=final_state['al_book_balance'],
-            cashinflow_per_unit=self.cash_inflow_per_unit,
-            rate=self.decumulation_rate,
-        )
-        
-        simulator = AssetLiabilitySimulator(
-            al_schema=al_schema,
-            initial_cash_balance=final_state['cash_balance'],
-            capital_cash_inflow_before_tax=capital_inflow_schedule,  # List of withdrawal amounts
-            cash_outflow=0,
-            income_gain_tax_rate=self.income_gain_tax_rate,
-            capital_gain_tax_rate=self.capital_gain_tax_rate,
-        )
-        
-        return simulator.simulate(n_periods=self.decumulation_periods)
+        if self.decumulation_periods == 1:
+            # Single period decumulation: start with assets and withdraw all
+            al_schema = AssetLiabilitySchema(
+                price=final_state['price'] * (1 + transition_rate),
+                unit=final_state['al_unit'],
+                balance=total_asset_value,
+                book_balance=final_state['al_book_balance'],
+                cashinflow_per_unit=self.cash_inflow_per_unit,
+                rate=self.decumulation_rate,
+            )
+            
+            simulator = AssetLiabilitySimulator(
+                al_schema=al_schema,
+                initial_cash_balance=final_state['cash_balance'],
+                capital_cash_inflow_before_tax=total_asset_value,  # Withdraw all assets
+                cash_outflow=0,  # No additional investment during decumulation
+                income_gain_tax_rate=self.income_gain_tax_rate,
+                capital_gain_tax_rate=self.capital_gain_tax_rate,
+            )
+            
+            # Simulate for exactly decumulation_periods (1 period)
+            return simulator.simulate(n_periods=self.decumulation_periods)
+            
+        else:
+            # Multiple periods: use capital recovery factor for equal withdrawals
+            # Get the first rate of decumulation phase for interest calculation
+            decumulation_first_rate = self._get_transition_rate(self.decumulation_rate, is_end=False)
+            
+            interest_factor = InterestFactor(
+                rate=decumulation_first_rate,
+                time_period=self.decumulation_periods,
+                amount=total_asset_value
+            )
+            withdrawal_amount = interest_factor.calculate_capital_recovery()
+            
+            # Create schedules for multiple periods
+            # First period: invest all assets, then withdraw equal amounts each period
+            capital_inflow_schedule = [0] + [withdrawal_amount] * self.decumulation_periods
+            cash_outflow_schedule = [total_asset_value] + [0] * self.decumulation_periods
+            
+            # For the rate schedule in the internal simulation, we need one extra rate
+            # for the initial investment period. Use the transition_rate for this.
+            # Handle both list and float cases for decumulation_rate
+            if isinstance(self.decumulation_rate, list):
+                extended_decumulation_rate = [transition_rate] + list(self.decumulation_rate)
+            else:
+                # Convert single float to list and extend
+                extended_decumulation_rate = [self.decumulation_rate] * (self.decumulation_periods + 1)
+            
+            # Start with empty portfolio
+            al_schema = AssetLiabilitySchema(
+                price=final_state['price'] * (1 + transition_rate),
+                unit=0,
+                balance=0,
+                book_balance=0,
+                cashinflow_per_unit=self.cash_inflow_per_unit,
+                rate=extended_decumulation_rate,
+            )
+            
+            simulator = AssetLiabilitySimulator(
+                al_schema=al_schema,
+                initial_cash_balance=final_state['cash_balance'],
+                capital_cash_inflow_before_tax=capital_inflow_schedule,
+                cash_outflow=cash_outflow_schedule,
+                income_gain_tax_rate=self.income_gain_tax_rate,
+                capital_gain_tax_rate=self.capital_gain_tax_rate,
+            )
+            
+            # Simulate for decumulation_periods + 1 to handle initial investment
+            result = simulator.simulate(n_periods=self.decumulation_periods + 1)
+            
+            # Return only the decumulation periods (skip the initial investment period)
+            return result.iloc[1:].reset_index(drop=True)
+
     
-    def _get_initial_rate(self, rate: Union[float, List[float]]) -> float:
+    def _get_transition_rate(self, phase_rates: Union[float, List[float]], is_end: bool = True) -> float:
         """
-        Get initial rate for phase transition calculations
+        Get rate for phase transition calculations
         
         Parameters
         ----------
-        rate : Union[float, List[float]]
+        phase_rates : Union[float, List[float]]
             Rate specification for the phase
+        is_end : bool, default True
+            If True, get the last rate (for phase end transition)
+            If False, get the first rate (for phase start)
             
         Returns
         -------
         float
-            Initial rate value
+            Rate value for transition
         """
-        if isinstance(rate, list):
-            return rate[0] if rate else 0.0
+        if isinstance(phase_rates, list):
+            if not phase_rates:
+                return 0.0
+            return phase_rates[-1] if is_end else phase_rates[0]
         else:
-            return rate
+            return phase_rates
     
     def _combine_results(self) -> pd.DataFrame:
         """
