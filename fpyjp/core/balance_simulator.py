@@ -1021,43 +1021,43 @@ class LifecycleInvestmentSimulator:
         
         # Determine the final state from the previous phase
         if len(self.hold_df) == 0:
-            # No hold phase - use accumulation phase final state
             if self.accumulation_df is None or len(self.accumulation_df) == 0:
                 raise ValueError("No valid data from previous phases")
             final_state = self.accumulation_df.iloc[-1]
-            
-            # Apply one period of growth using decumulation rate for price transition
-            decumulation_rate = self._get_initial_rate(self.decumulation_rate)
-            adjusted_price = final_state['price'] * (1 + decumulation_rate)
-            adjusted_balance = final_state['al_balance'] * (1 + decumulation_rate)
         else:
-            # Normal case - use hold phase final state
             final_state = self.hold_df.iloc[-1]
-            decumulation_rate = self._get_initial_rate(self.decumulation_rate)
-            adjusted_price = final_state['price'] * (1 + decumulation_rate)
-            adjusted_balance = final_state['al_balance'] * (1 + decumulation_rate)
         
-        # Calculate withdrawal amount for complete decumulation over specified periods
-        # Use InterestFactor's capital recovery factor for equal periodic withdrawals
-        total_asset_value = adjusted_balance
+        # Calculate decumulation parameters
+        decumulation_rate = self._get_initial_rate(self.decumulation_rate)
         
-        # Use InterestFactor to calculate capital recovery factor
+        # Calculate the correct asset value for decumulation start
+        # This should be the hold phase end balance grown by one period
+        total_asset_value = final_state['al_balance'] * (1 + decumulation_rate)
+        
+        # Calculate withdrawal amount using InterestFactor
         interest_factor = InterestFactor(
             rate=decumulation_rate,
             time_period=self.decumulation_periods,
             amount=total_asset_value
         )
-        
         withdrawal_amount = interest_factor.calculate_capital_recovery()
         
-        # Ensure withdrawal_amount is applied to all decumulation periods
-        capital_inflow_schedule = [withdrawal_amount] * self.decumulation_periods
+        # Create the correct capital inflow schedule:
+        # [0, withdrawal_amount, withdrawal_amount, ...]
+        # The first period (0) is for initial asset investment
+        capital_inflow_schedule = [0] + [withdrawal_amount] * self.decumulation_periods
         
+        # Create the correct cash outflow schedule:
+        # [total_asset_value, 0, 0, ...]
+        # The first period invests all assets, subsequent periods have no outflow
+        cash_outflow_schedule = [total_asset_value] + [0] * self.decumulation_periods
+        
+        # Start with empty portfolio
         al_schema = AssetLiabilitySchema(
-            price=adjusted_price,
-            unit=final_state['al_unit'],
-            balance=adjusted_price * final_state['al_unit'],  # Ensure price * unit = balance
-            book_balance=final_state['al_book_balance'],
+            price=final_state['price'] * (1 + decumulation_rate),
+            unit=0,  # Start with no units
+            balance=0,  # Start with no balance
+            book_balance=0,  # Start with no book balance
             cashinflow_per_unit=self.cash_inflow_per_unit,
             rate=self.decumulation_rate,
         )
@@ -1065,13 +1065,17 @@ class LifecycleInvestmentSimulator:
         simulator = AssetLiabilitySimulator(
             al_schema=al_schema,
             initial_cash_balance=final_state['cash_balance'],
-            capital_cash_inflow_before_tax=capital_inflow_schedule,  # List of withdrawal amounts
-            cash_outflow=0,
+            capital_cash_inflow_before_tax=capital_inflow_schedule,
+            cash_outflow=cash_outflow_schedule,
             income_gain_tax_rate=self.income_gain_tax_rate,
             capital_gain_tax_rate=self.capital_gain_tax_rate,
         )
         
-        return simulator.simulate(n_periods=self.decumulation_periods)
+        # Simulate for decumulation_periods + 1 to handle initial investment
+        result = simulator.simulate(n_periods=self.decumulation_periods + 1)
+        
+        # Return only the decumulation periods (skip the initial investment period)
+        return result.iloc[1:].reset_index(drop=True)
     
     def _get_initial_rate(self, rate: Union[float, List[float]]) -> float:
         """

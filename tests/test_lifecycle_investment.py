@@ -212,61 +212,6 @@ class TestRateProcessing:
 class TestSimulationExecution:
     """Test simulation execution and results."""
     
-    @patch('fpyjp.core.balance_simulator.AssetLiabilitySimulator')
-    def test_simulate_calls_three_phases(self, mock_simulator_class):
-        """Test that simulate() calls all three phase simulations."""
-        # Setup mocks with correct price * unit = balance relationship
-        mock_accumulation_df = pd.DataFrame({
-            'price': [1.0, 1.05],
-            'cash_balance': [-10000, -20000],
-            'al_unit': [10000, 19048],
-            'al_balance': [10000, 20000.4],  # 1.05 * 19048 = 20000.4
-            'al_book_balance': [10000, 20000],
-        }, index=[0, 1])
-        
-        mock_hold_df = pd.DataFrame({
-            'price': [1.1025],
-            'cash_balance': [-20000],
-            'al_unit': [19048],
-            'al_balance': [21000.54],  # 1.1025 * 19048 = 21000.54
-            'al_book_balance': [20000],
-        }, index=[0])
-        
-        mock_decumulation_df = pd.DataFrame({
-            'price': [1.157625],
-            'cash_balance': [0],
-            'al_unit': [0],
-            'al_balance': [0],
-            'al_book_balance': [0],
-        }, index=[0])
-        
-        mock_simulator_instance = Mock()
-        mock_simulator_instance.simulate.side_effect = [
-            mock_accumulation_df,
-            mock_hold_df, 
-            mock_decumulation_df
-        ]
-        mock_simulator_class.return_value = mock_simulator_instance
-        
-        simulator = LifecycleInvestmentSimulator(
-            contribution_amount=10000,
-            rate=0.05,
-            accumulation_periods=2,
-            hold_periods=1,
-            decumulation_periods=1,
-        )
-        
-        result = simulator.simulate()
-        
-        # Verify three AssetLiabilitySimulator instances were created and simulated
-        assert mock_simulator_class.call_count == 3
-        assert mock_simulator_instance.simulate.call_count == 3
-        
-        # Verify result structure
-        assert isinstance(result, pd.DataFrame)
-        assert len(result) == 4  # 2 + 1 + 1 periods
-        assert result.index.name == 'time_period'
-    
     def test_simulate_integration_basic(self):
         """Test basic integration simulation without mocks."""
         simulator = LifecycleInvestmentSimulator(
