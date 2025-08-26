@@ -99,7 +99,7 @@ class TestLifecycleInvestmentSimulatorInit:
     
     def test_negative_periods_error(self):
         """Test error when periods are negative or zero."""
-        with pytest.raises(ValueError, match="All periods must be positive"):
+        with pytest.raises(ValueError, match="accumulation_periods and decumulation_periods must be positive"):
             LifecycleInvestmentSimulator(
                 contribution_amount=10000,
                 rate=0.05,
@@ -110,7 +110,7 @@ class TestLifecycleInvestmentSimulatorInit:
     
     def test_invalid_timepoint_order_error(self):
         """Test error when time points are not in ascending order."""
-        with pytest.raises(ValueError, match="Time points must be in ascending order"):
+        with pytest.raises(ValueError, match="Time points must be in order"):
             LifecycleInvestmentSimulator(
                 contribution_amount=10000,
                 rate=0.05,
@@ -537,6 +537,102 @@ class TestParameterDefaults:
         assert simulator.income_gain_tax_rate == 0.15
         assert simulator.capital_gain_tax_rate == 0.20
 
+
+# hold_periods=0のテストケースを追加
+class TestHoldPeriodsZero:
+    """Test cases for hold_periods=0."""
+    
+    def test_hold_periods_zero_period_based(self):
+        """Test hold_periods=0 with period-based specification."""
+        simulator = LifecycleInvestmentSimulator(
+            contribution_amount=10000,
+            rate=0.05,
+            accumulation_periods=2,
+            hold_periods=0,  # Zero hold periods
+            decumulation_periods=2,
+        )
+        
+        result = simulator.simulate()
+        
+        # Should have 2 + 0 + 2 = 4 periods
+        assert len(result) == 4
+        assert isinstance(result, pd.DataFrame)
+        
+        # Check that indices are continuous (0, 1, 2, 3)
+        assert list(result.index) == [0, 1, 2, 3]
+        
+        # Accumulation phase: periods 0-1
+        accumulation_rows = result.iloc[:2]
+        assert all(accumulation_rows['cash_outflow'] == 10000)
+        
+        # Decumulation phase: periods 2-3 (no hold phase)
+        decumulation_rows = result.iloc[2:]
+        assert all(decumulation_rows['capital_cash_inflow_before_tax'] > 0)
+        assert all(decumulation_rows['cash_outflow'] == 0)
+    
+    def test_hold_periods_zero_timepoint_based(self):
+        """Test hold_periods=0 with time-point-based specification."""
+        simulator = LifecycleInvestmentSimulator(
+            contribution_amount=10000,
+            rate=0.05,
+            accumulation_end_period=2,
+            decumulation_start_period=2,  # Same as accumulation_end → hold_periods=0
+            simulation_end_period=4,
+        )
+        
+        # Should calculate periods correctly
+        assert simulator.accumulation_periods == 2
+        assert simulator.hold_periods == 0
+        assert simulator.decumulation_periods == 2
+        
+        result = simulator.simulate()
+        assert len(result) == 4
+    
+    def test_hold_df_empty_when_hold_periods_zero(self):
+        """Test that hold_df is empty when hold_periods=0."""
+        simulator = LifecycleInvestmentSimulator(
+            contribution_amount=10000,
+            rate=0.05,
+            accumulation_periods=1,
+            hold_periods=0,
+            decumulation_periods=1,
+        )
+        
+        simulator.simulate()
+        
+        # hold_df should be empty but have correct structure
+        assert isinstance(simulator.hold_df, pd.DataFrame)
+        assert len(simulator.hold_df) == 0
+        
+        # But should have correct columns
+        expected_columns = [
+            'price', 'pre_cash_balance', 'pre_al_unit', 'pre_al_balance',
+            'pre_al_book_balance', 'pre_unrealized_gl', 'cash_inflow_per_unit',
+            'income_cash_inflow_before_tax', 'income_gain_tax_rate',
+            'income_gain_tax', 'income_cash_inflow', 'unit_outflow',
+            'capital_cash_inflow_before_tax', 'capital_gain_tax_rate',
+            'capital_gain_tax', 'capital_cash_inflow', 'cash_inflow', 'unit_inflow',
+            'cash_outflow', 'cash_flow', 'unit_flow', 'cash_balance', 'al_unit',
+            'al_balance', 'al_book_balance', 'unrealized_gl', 'rate'
+        ]
+        
+        for col in expected_columns:
+            assert col in simulator.hold_df.columns
+    
+    def test_rate_distribution_with_hold_periods_zero(self):
+        """Test rate list distribution when hold_periods=0."""
+        rate_list = [0.08, 0.06, 0.04, 0.02]  # 4 rates for 2+0+2 periods
+        simulator = LifecycleInvestmentSimulator(
+            contribution_amount=10000,
+            rate=rate_list,
+            accumulation_periods=2,
+            hold_periods=0,
+            decumulation_periods=2,
+        )
+        
+        assert simulator.accumulation_rate == [0.08, 0.06]
+        assert simulator.hold_rate == []  # Empty list for zero hold periods
+        assert simulator.decumulation_rate == [0.04, 0.02]
 
 if __name__ == "__main__":
     # Run tests with pytest
